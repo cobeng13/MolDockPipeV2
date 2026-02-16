@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -30,16 +31,26 @@ def run_script(module: str, script_name: str, project_dir: Path, logs_dir: Path)
     stdout_log = logs_dir / f"{module}.stdout.log"
     stderr_log = logs_dir / f"{module}.stderr.log"
 
+    # Force UTF-8 for child Python processes to avoid Windows cp1252/charmap
+    # failures on emoji/non-ASCII writes in redirected stdout/stderr (PEP 540/597).
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env.setdefault("PYTHONLEGACYWINDOWSSTDIO", "0")
+
     cmd = [sys.executable, str(script_path)]
     proc = subprocess.run(
         cmd,
         cwd=project_dir,
+        env=env,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
-    stdout_log.write_text(proc.stdout or "", encoding="utf-8")
-    stderr_log.write_text(proc.stderr or "", encoding="utf-8")
+    stdout_log.write_text(proc.stdout or "", encoding="utf-8", errors="replace")
+    stderr_log.write_text(proc.stderr or "", encoding="utf-8", errors="replace")
 
     return AdapterResult(
         module=module,

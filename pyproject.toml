@@ -7,6 +7,9 @@ name = "moldockpipe"
 version = "0.1.0"
 description = "Engine + CLI orchestrator for MolDockPipe"
 requires-python = ">=3.10"
+dependencies = [
+  "click>=8.0",
+]
 
 [project.scripts]
 moldock = "moldockpipe.cli:app"

@@ -75,6 +75,8 @@ The CLI prints structured JSON suitable for future GUI integration.
 
 For GPU runs, stdout/stderr are captured per module execution in these logs.
 
+The adapter runner forces UTF-8 for child Python module processes (`PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`) to avoid Windows ANSI codepage pipe issues (for example emoji output causing cp1252 `UnicodeEncodeError`).
+
 ## GUI integration plan (next step)
 
 The future desktop GUI can call `moldockpipe.engine` functions directly:

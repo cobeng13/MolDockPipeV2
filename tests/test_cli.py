@@ -9,3 +9,10 @@ def test_cli_status(monkeypatch):
     result = runner.invoke(app, ["status", "./demo"])
     assert result.exit_code == 0
     assert '"ok": true' in result.output
+
+
+def test_cli_help_works():
+    runner = CliRunner()
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "MolDockPipe orchestrator CLI" in result.output
