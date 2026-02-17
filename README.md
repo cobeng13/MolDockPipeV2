@@ -22,9 +22,24 @@ This repository now exposes a **clean orchestration layer** around the original 
 
 ## Installation
 
+### Recommended Windows setup (single environment, no interpreter mixing)
+
+> Important: install RDKit/Meeko in the **same Python environment** used to run `moldock`.
+> Mixing system Python and venv/conda Python is not supported.
+
+```bash
+conda create -n moldockpipe python=3.10 -y
+conda activate moldockpipe
+conda install -c conda-forge rdkit -y
+pip install meeko
+pip install -e .
+```
+
+### venv-only setup (if your platform packages RDKit there)
+
 ```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -e .
 ```
 
@@ -43,7 +58,7 @@ The CLI prints structured JSON suitable for future GUI integration.
 
 ```text
 ┌──────────────┐
-│ Preflight    │  validate project_dir, input/input.csv, state paths
+│ Preflight    │  validate project_dir, dependencies, binaries, runtime
 └──────┬───────┘
        ▼
 ┌──────────────┐
@@ -72,6 +87,12 @@ The CLI prints structured JSON suitable for future GUI integration.
 - Run state: `state/run_status.json`
 - Manifest: `state/manifest.csv`
 - Adapter logs: `logs/engine/<module>.stdout.log` and `logs/engine/<module>.stderr.log`
+- Preflight runtime log: `logs/engine/preflight.log`
+
+Runtime behavior:
+- All modules are executed with `sys.executable` (the currently active interpreter).
+- All modules run with deterministic `cwd=project_dir`.
+- Preflight records `python_executable`, `python_version`, and runtime context for reproducibility.
 
 For GPU runs, stdout/stderr are captured per module execution in these logs.
 

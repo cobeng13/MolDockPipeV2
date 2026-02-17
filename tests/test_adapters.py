@@ -24,6 +24,7 @@ def test_adapter_invokes_subprocess_and_writes_logs(tmp_path, monkeypatch):
     assert Path(result.stdout_log).read_text(encoding="utf-8") == "ok out"
     assert Path(result.stderr_log).read_text(encoding="utf-8") == "ok err"
     assert "Module 1.py" in " ".join(called["cmd"])
+    assert called["cmd"][0] == sys.executable
     assert called["env"]["PYTHONUTF8"] == "1"
     assert called["env"]["PYTHONIOENCODING"] == "utf-8"
     assert called["encoding"] == "utf-8"
