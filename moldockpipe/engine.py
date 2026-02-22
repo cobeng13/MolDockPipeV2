@@ -35,6 +35,15 @@ DEFAULT_CONFIG = {
         "vina_cpu_path": "tools/vina_1.2.7_win.exe",
         "vina_gpu_path": "tools/vina-gpu.exe",
     },
+    "docking": {
+        "box": {
+            "center": [0.0, 0.0, 0.0],
+            "size": [20.0, 20.0, 20.0],
+        },
+        "exhaustiveness": 8,
+        "num_modes": 9,
+        "energy_range": 3,
+    },
 }
 
 CPU_VINA_CANDIDATES = ["vina", "vina.exe", "vina_1.2.7_win.exe", "vina_1.2.5_win.exe"]
@@ -206,6 +215,54 @@ def _load_project_config(project_dir: Path, cli_config: dict | None) -> tuple[di
     return cfg, warnings
 
 
+
+
+def _parse_docking_params(config: dict) -> dict:
+    docking = config.get("docking") or {}
+    box = docking.get("box") or {}
+    center = box.get("center")
+    size = box.get("size")
+
+    if not isinstance(center, (list, tuple)) or len(center) != 3 or not isinstance(size, (list, tuple)) or len(size) != 3:
+        raise PreflightError(
+            "Docking parameters missing. Please set docking.box.center and docking.box.size in config/run.yml."
+        )
+
+    try:
+        cx, cy, cz = [float(v) for v in center]
+        sx, sy, sz = [float(v) for v in size]
+        exhaustiveness = int(docking.get("exhaustiveness", 8))
+        num_modes = int(docking.get("num_modes", 9))
+        energy_range = float(docking.get("energy_range", 3))
+    except Exception as exc:
+        raise PreflightError(
+            "Docking parameters missing. Please set docking.box.center and docking.box.size in config/run.yml."
+        ) from exc
+
+    if sx <= 0 or sy <= 0 or sz <= 0:
+        raise PreflightError("Docking box size values must be > 0.")
+
+    return {
+        "center_x": cx,
+        "center_y": cy,
+        "center_z": cz,
+        "size_x": sx,
+        "size_y": sy,
+        "size_z": sz,
+        "exhaustiveness": exhaustiveness,
+        "num_modes": num_modes,
+        "energy_range": energy_range,
+    }
+
+
+def _legacy_vina_config_exists(mode: str, resolved_vina_path: str | None) -> bool:
+    if not resolved_vina_path:
+        return False
+    vp = Path(resolved_vina_path)
+    if mode == "gpu":
+        return (vp.parent / "VinaGPUConfig.txt").exists() or (vp.parent / "VinaConfig.txt").exists()
+    return (vp.parent / "VinaConfig.txt").exists()
+
 def _write_preflight_log(paths: dict[str, Path], config: dict, config_hash: str, versions: dict, warnings: list[str]) -> None:
     lines = [
         f"python_executable={sys.executable}",
@@ -218,6 +275,7 @@ def _write_preflight_log(paths: dict[str, Path], config: dict, config_hash: str,
         f"resolved_receptor={config.get('resolved_receptor_path')}",
         f"resolved_vina_cpu={config.get('resolved_vina_cpu_path')}",
         f"resolved_vina_gpu={config.get('resolved_vina_gpu_path')}",
+        f"resolved_docking={config.get('resolved_docking')}",
         f"rdkit_version={versions.get('rdkit')}",
         f"meeko_version={versions.get('meeko')}",
         f"pandas_version={versions.get('pandas')}",
@@ -259,29 +317,45 @@ def _run_preflight_checks(project_dir: Path, config: dict, warnings: list[str]) 
     if importlib.util.find_spec("meeko") is None:
         raise PreflightError("Meeko is required for Module 3. Install it in this environment: pip install meeko==0.6.1")
 
-    cpu_path, cpu_warn = _resolve_tool_path(config.get("tools", {}).get("vina_cpu_path"), project_dir, CPU_VINA_CANDIDATES)
-    gpu_path, gpu_warn = _resolve_tool_path(config.get("tools", {}).get("vina_gpu_path"), project_dir, GPU_VINA_CANDIDATES)
-    config["resolved_vina_cpu_path"] = cpu_path
-    config["resolved_vina_gpu_path"] = gpu_path
-
-    if cpu_warn:
-        warnings.append(cpu_warn)
-    if gpu_warn:
-        warnings.append(gpu_warn)
-
     mode = config.get("docking_mode", "cpu")
-    if mode == "gpu" and not gpu_path:
-        attempted = config.get("tools", {}).get("vina_gpu_path") or "tools/vina-gpu.exe"
-        raise PreflightError(
-            f"GPU docking selected but no Vina-GPU binary was found. Checked configured tools.vina_gpu_path={attempted}. "
-            f"Default Option 1 location is {REPO_ROOT / 'tools'}."
-        )
-    if mode == "cpu" and not cpu_path:
-        attempted = config.get("tools", {}).get("vina_cpu_path") or "tools/vina_1.2.7_win.exe"
-        raise PreflightError(
-            f"CPU docking selected but no Vina binary was found. Checked configured tools.vina_cpu_path={attempted}. "
-            f"Default Option 1 location is {REPO_ROOT / 'tools'}."
-        )
+    cpu_path = gpu_path = None
+
+    if mode == "cpu":
+        cpu_path, cpu_warn = _resolve_tool_path(config.get("tools", {}).get("vina_cpu_path"), project_dir, CPU_VINA_CANDIDATES)
+        config["resolved_vina_cpu_path"] = cpu_path
+        config["resolved_vina_gpu_path"] = None
+        if cpu_warn:
+            warnings.append(cpu_warn)
+        if not cpu_path:
+            attempted = config.get("tools", {}).get("vina_cpu_path") or "tools/vina_1.2.7_win.exe"
+            raise PreflightError(
+                f"CPU docking selected but no Vina binary was found. Checked configured tools.vina_cpu_path={attempted}. "
+                f"Default Option 1 location is {REPO_ROOT / 'tools'}."
+            )
+    else:
+        gpu_path, gpu_warn = _resolve_tool_path(config.get("tools", {}).get("vina_gpu_path"), project_dir, GPU_VINA_CANDIDATES)
+        config["resolved_vina_gpu_path"] = gpu_path
+        config["resolved_vina_cpu_path"] = None
+        if gpu_warn:
+            warnings.append(gpu_warn)
+        if not gpu_path:
+            attempted = config.get("tools", {}).get("vina_gpu_path") or "tools/vina-gpu.exe"
+            raise PreflightError(
+                f"GPU docking selected but no Vina-GPU binary was found. Checked configured tools.vina_gpu_path={attempted}. "
+                f"Default Option 1 location is {REPO_ROOT / 'tools'}."
+            )
+
+    try:
+        config["resolved_docking"] = _parse_docking_params(config)
+    except PreflightError:
+        legacy_ok = _legacy_vina_config_exists(mode, cpu_path if mode == "cpu" else gpu_path)
+        if legacy_ok:
+            warnings.append(
+                "Using legacy VinaConfig.txt; define docking parameters in run.yml for future compatibility."
+            )
+            config["resolved_docking"] = None
+        else:
+            raise
 
     versions = _collect_versions()
     warnings.extend(_version_warnings(versions))
@@ -338,11 +412,27 @@ def _history_append(status_path: Path, entry: dict) -> None:
     update_run_status(status_path, history=history)
 
 
-def _run_docking(project_dir: Path, logs_dir: Path, config: dict):
+def _run_docking(project_dir: Path, logs_dir: Path, config: dict, config_hash: str):
     mode = (config.get("docking_mode") or "cpu").lower()
+    docking_params = config.get("resolved_docking")
+    receptor_path = config.get("resolved_receptor_path")
     if mode == "gpu":
-        return docking_gpu.run(project_dir, logs_dir, vina_path=config.get("resolved_vina_gpu_path"))
-    return docking_cpu.run(project_dir, logs_dir, vina_path=config.get("resolved_vina_cpu_path"))
+        return docking_gpu.run(
+            project_dir,
+            logs_dir,
+            vina_path=config.get("resolved_vina_gpu_path"),
+            receptor_path=receptor_path,
+            docking_params=docking_params,
+            config_hash=config_hash,
+        )
+    return docking_cpu.run(
+        project_dir,
+        logs_dir,
+        vina_path=config.get("resolved_vina_cpu_path"),
+        receptor_path=receptor_path,
+        docking_params=docking_params,
+        config_hash=config_hash,
+    )
 
 
 def _module_is_complete_for_all_ligands(paths: dict[str, Path], module_name: str) -> bool:
@@ -428,7 +518,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool) -> d
         elif module_name == "module3_meeko":
             result = meeko.run(project_dir, paths["engine_logs_dir"])
         else:
-            result = _run_docking(project_dir, paths["engine_logs_dir"], config)
+            result = _run_docking(project_dir, paths["engine_logs_dir"], config, config_hash)
 
         record = {
             "module": module_name,

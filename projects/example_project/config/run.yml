@@ -1,1 +1,11 @@
 docking_mode: cpu
+tools:
+  vina_cpu_path: tools/vina_1.2.7_win.exe
+  vina_gpu_path: tools/vina-gpu.exe
+docking:
+  box:
+    center: [0.0, 0.0, 0.0]
+    size: [20.0, 20.0, 20.0]
+  exhaustiveness: 8
+  num_modes: 9
+  energy_range: 3

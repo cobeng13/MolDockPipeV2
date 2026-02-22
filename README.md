@@ -23,6 +23,20 @@ Option 1 (central tools folder):
 - Example CPU binary: `tools/vina_1.2.7_win.exe`
 - Projects stay lightweight (no per-project binary copies required).
 
+Docking parameters are GUI-ready in `config/run.yml`:
+
+```yaml
+docking:
+  box:
+    center: [0.0, 0.0, 0.0]
+    size: [20.0, 20.0, 20.0]
+  exhaustiveness: 8
+  num_modes: 9
+  energy_range: 3
+```
+
+Module 4 no longer requires static `VinaConfig.txt` by default.
+
 ## CLI
 
 ```bash

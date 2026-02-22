@@ -137,36 +137,92 @@ def as_int(d:Dict[str,str],k:str,default:int)->int:
     try: return int(str(d.get(k,default)).strip())
     except: return int(default)
 
-def load_runtime(vgpu: Path):
-    cfg_gpu = vgpu.parent/"VinaGPUConfig.txt"
-    cfg_cpu = vgpu.parent/"VinaConfig.txt"
+def load_runtime(vgpu: Path, args):
+    has_explicit_box = all(
+        getattr(args, name) is not None
+        for name in ("center_x", "center_y", "center_z", "size_x", "size_y", "size_z")
+    )
+
+    if has_explicit_box:
+        box = {
+            "center_x": float(args.center_x),
+            "center_y": float(args.center_y),
+            "center_z": float(args.center_z),
+            "size_x": float(args.size_x),
+            "size_y": float(args.size_y),
+            "size_z": float(args.size_z),
+        }
+        gcfg = {
+            "thread": max(1000, int(args.exhaustiveness or 10000)),
+            "search_depth": int(args.num_modes or 32),
+        }
+        rec = Path(args.receptor).resolve() if args.receptor else DIR_REC_FALLBACK.resolve()
+        if not rec.exists():
+            raise SystemExit(f"❌ Receptor not found: {rec}")
+        lig_dir = DIR_PREP
+        out_dir = DIR_RESULTS
+        cfg_path = out_dir / "_engine_gpu_autoconfig.txt"
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(
+            "\n".join(
+                [
+                    f"center_x={box['center_x']}",
+                    f"center_y={box['center_y']}",
+                    f"center_z={box['center_z']}",
+                    f"size_x={box['size_x']}",
+                    f"size_y={box['size_y']}",
+                    f"size_z={box['size_z']}",
+                    f"receptor={rec}",
+                    f"ligand_directory={lig_dir}",
+                    f"output_directory={out_dir}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        chash = args.config_hash or hashlib.sha1(cfg_path.read_bytes()).hexdigest()[:10]
+        print("Vina-GPU:", vgpu, "| Config:", cfg_path)
+        print("Box:", box, "| GPU params:", gcfg)
+        print("Ligand dir:", lig_dir, "| Output dir:", out_dir)
+        return box, gcfg, rec, chash, lig_dir, out_dir, cfg_path
+
+    cfg_gpu = vgpu.parent / "VinaGPUConfig.txt"
+    cfg_cpu = vgpu.parent / "VinaConfig.txt"
     cfg_path = cfg_gpu if cfg_gpu.exists() else cfg_cpu
-    conf = parse_cfg(cfg_path)
-    box = {
-        "center_x": as_float(conf,"center_x",0.0),
-        "center_y": as_float(conf,"center_y",0.0),
-        "center_z": as_float(conf,"center_z",0.0),
-        "size_x":   as_float(conf,"size_x",20.0),
-        "size_y":   as_float(conf,"size_y",20.0),
-        "size_z":   as_float(conf,"size_z",20.0),
-    }
-    gcfg = {
-        "thread": max(1000, as_int(conf,"thread",10000)),
-        "search_depth": as_int(conf,"search_depth",32),
-    }
-    rec_str = conf.get("receptor","") or conf.get("receptor_file","")
-    rec = Path(rec_str) if rec_str else DIR_REC_FALLBACK
-    if not rec.is_absolute(): rec = (vgpu.parent/rec).resolve()
-    if not rec.exists(): raise SystemExit(f"❌ Receptor not found: {rec}")
+    if cfg_path.exists():
+        print("⚠️ Using legacy VinaConfig.txt/VinaGPUConfig.txt; define docking parameters in run.yml for future compatibility.")
+        conf = parse_cfg(cfg_path)
+        box = {
+            "center_x": as_float(conf, "center_x", 0.0),
+            "center_y": as_float(conf, "center_y", 0.0),
+            "center_z": as_float(conf, "center_z", 0.0),
+            "size_x": as_float(conf, "size_x", 20.0),
+            "size_y": as_float(conf, "size_y", 20.0),
+            "size_z": as_float(conf, "size_z", 20.0),
+        }
+        gcfg = {
+            "thread": max(1000, as_int(conf, "thread", 10000)),
+            "search_depth": as_int(conf, "search_depth", 32),
+        }
+        rec_str = conf.get("receptor", "") or conf.get("receptor_file", "")
+        rec = Path(rec_str) if rec_str else DIR_REC_FALLBACK
+        if not rec.is_absolute():
+            rec = (vgpu.parent / rec).resolve()
+        if not rec.exists():
+            raise SystemExit(f"❌ Receptor not found: {rec}")
 
-    lig_dir = Path(conf["ligand_directory"]).resolve() if "ligand_directory" in conf else DIR_PREP
-    out_dir = Path(conf["output_directory"]).resolve() if "output_directory" in conf else DIR_RESULTS
+        lig_dir = Path(conf["ligand_directory"]).resolve() if "ligand_directory" in conf else DIR_PREP
+        out_dir = Path(conf["output_directory"]).resolve() if "output_directory" in conf else DIR_RESULTS
 
-    chash = hashlib.sha1((cfg_path.read_text(encoding="utf-8")).encode("utf-8")).hexdigest()[:10]
-    print("Vina-GPU:", vgpu, "| Config:", cfg_path)
-    print("Box:", box, "| GPU params:", gcfg)
-    print("Ligand dir:", lig_dir, "| Output dir:", out_dir)
-    return box,gcfg,rec,chash,lig_dir,out_dir,cfg_path
+        chash = hashlib.sha1((cfg_path.read_text(encoding="utf-8")).encode("utf-8")).hexdigest()[:10]
+        print("Vina-GPU:", vgpu, "| Config:", cfg_path)
+        print("Box:", box, "| GPU params:", gcfg)
+        print("Ligand dir:", lig_dir, "| Output dir:", out_dir)
+        return box, gcfg, rec, chash, lig_dir, out_dir, cfg_path
+
+    raise SystemExit(
+        "❌ Docking parameters missing. Please set docking.box.center and docking.box.size in config/run.yml."
+    )
 
 # --- Pose parsing ---
 RES_RE = re.compile(r"REMARK VINA RESULT:\s+(-?\d+\.\d+)", re.I)
@@ -219,10 +275,21 @@ def run_batch(vgpu:Path, cfg_file:Path, lig_dir:Path, out_dir:Path, gcfg:dict)->
 def main():
     parser = argparse.ArgumentParser(description="Module 4b GPU docking")
     parser.add_argument("--vina", default=None, help="Explicit path to Vina GPU binary")
+    parser.add_argument("--receptor", default=None, help="Explicit receptor path")
+    parser.add_argument("--center_x", type=float, default=None)
+    parser.add_argument("--center_y", type=float, default=None)
+    parser.add_argument("--center_z", type=float, default=None)
+    parser.add_argument("--size_x", type=float, default=None)
+    parser.add_argument("--size_y", type=float, default=None)
+    parser.add_argument("--size_z", type=float, default=None)
+    parser.add_argument("--exhaustiveness", type=int, default=None)
+    parser.add_argument("--num_modes", type=int, default=None)
+    parser.add_argument("--energy_range", type=float, default=None)
+    parser.add_argument("--config-hash", default=None)
     args = parser.parse_args()
 
     vgpu = find_vinagpu_binary(args.vina)
-    box,gcfg,receptor,chash,lig_dir,out_dir,cfg_file = load_runtime(vgpu)
+    box,gcfg,receptor,chash,lig_dir,out_dir,cfg_file = load_runtime(vgpu, args)
 
     all_ligs = sorted(lig_dir.glob("*.pdbqt"))
     if not all_ligs: raise SystemExit("❌ No ligand PDBQTs found.")
