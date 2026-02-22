@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import importlib
+import importlib.metadata
 import importlib.util
+import json
 import os
+import platform
+import shutil
 import sys
 from pathlib import Path
 
 from moldockpipe.adapters import admet, build3d, docking_cpu, docking_gpu, meeko
 from moldockpipe.adapters.common import REPO_ROOT
 from moldockpipe.state import read_manifest, read_run_status, update_run_status, write_manifest
+
+try:
+    import yaml
+except Exception:  # pragma: no cover - guarded by dependency but kept safe
+    yaml = None
 
 MODULES: list[str] = [
     "module1_admet",
@@ -16,12 +27,45 @@ MODULES: list[str] = [
     "module4_docking",
 ]
 
+DEFAULT_CONFIG = {
+    "docking_mode": "cpu",
+    "strict_versions": False,
+    "receptor_path": "receptors/target_prepared.pdbqt",
+    "tools": {
+        "vina_cpu_path": None,
+        "vina_gpu_path": None,
+    },
+}
+
 CPU_VINA_CANDIDATES = ["vina", "vina.exe", "vina_1.2.7_win.exe", "vina_1.2.5_win.exe"]
 GPU_VINA_CANDIDATES = ["Vina-GPU+.exe", "Vina-GPU+_K.exe", "Vina-GPU.exe", "vina-gpu.exe", "vina-gpu"]
+
+RECOMMENDED = {
+    "python": "3.11",
+    "rdkit": "2025.03.",
+    "meeko": "0.6.1",
+}
 
 
 class PreflightError(RuntimeError):
     pass
+
+
+def _deep_update(dst: dict, src: dict) -> dict:
+    for key, value in src.items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            _deep_update(dst[key], value)
+        else:
+            dst[key] = value
+    return dst
+
+
+def _canonical_json(data: dict) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _config_hash(config: dict) -> str:
+    return hashlib.sha256(_canonical_json(config).encode("utf-8")).hexdigest()
 
 
 def _project_paths(project_dir: Path) -> dict[str, Path]:
@@ -31,8 +75,13 @@ def _project_paths(project_dir: Path) -> dict[str, Path]:
         "state_dir": project_dir / "state",
         "status_json": project_dir / "state" / "run_status.json",
         "manifest_csv": project_dir / "state" / "manifest.csv",
-        "logs_dir": project_dir / "logs" / "engine",
-        "preflight_log": project_dir / "logs" / "engine" / "preflight.log",
+        "logs_dir": project_dir / "logs",
+        "engine_logs_dir": project_dir / "logs" / "engine",
+        "preflight_log": project_dir / "logs" / "preflight.log",
+        "results_dir": project_dir / "results",
+        "structures_dir": project_dir / "3D_Structures",
+        "prepared_dir": project_dir / "prepared_ligands",
+        "run_yml": project_dir / "config" / "run.yml",
     }
 
 
@@ -40,68 +89,207 @@ def _runtime_info() -> dict:
     return {
         "python_executable": sys.executable,
         "python_version": sys.version,
+        "platform": platform.platform(),
         "cwd": str(Path.cwd()),
     }
 
 
-def _write_preflight_log(paths: dict[str, Path]) -> None:
+def _import_version(module_name: str) -> str | None:
+    try:
+        module = importlib.import_module(module_name)
+        return getattr(module, "__version__", None)
+    except Exception:
+        return None
+
+
+def _package_version(package_name: str) -> str | None:
+    try:
+        return importlib.metadata.version(package_name)
+    except Exception:
+        return None
+
+
+def _collect_versions() -> dict:
+    rdkit_ver = _import_version("rdkit")
+    meeko_ver = _import_version("meeko") or _package_version("meeko")
+    pandas_ver = _import_version("pandas")
+    return {
+        "python": platform.python_version(),
+        "rdkit": rdkit_ver,
+        "meeko": meeko_ver,
+        "pandas": pandas_ver,
+    }
+
+
+def _version_warnings(versions: dict) -> list[str]:
+    warnings = []
+    if not versions["python"].startswith(RECOMMENDED["python"]):
+        warnings.append(f"Recommended Python is {RECOMMENDED['python']} (detected {versions['python']}).")
+    if versions.get("rdkit") and not str(versions["rdkit"]).startswith(RECOMMENDED["rdkit"]):
+        warnings.append(
+            f"Recommended RDKit series is {RECOMMENDED['rdkit']}* (detected {versions['rdkit']})."
+        )
+    if versions.get("meeko") and versions["meeko"] != RECOMMENDED["meeko"]:
+        warnings.append(f"Recommended Meeko is {RECOMMENDED['meeko']} (detected {versions['meeko']}).")
+    return warnings
+
+
+def _resolve_tool_path(configured: str | None, project_dir: Path, candidates: list[str]) -> tuple[str | None, str | None]:
+    if configured:
+        p = Path(configured)
+        if not p.is_absolute():
+            p = project_dir / p
+        return (str(p.resolve()) if p.exists() else None), None
+
+    for candidate in candidates:
+        for base in (project_dir, REPO_ROOT):
+            p = base / candidate
+            if p.exists():
+                return str(p.resolve()), f"Configured path missing; used fallback candidate '{candidate}'."
+        found = shutil.which(candidate)
+        if found:
+            return found, f"Configured path missing; used PATH fallback '{candidate}'."
+    return None, None
+
+
+def _load_project_config(project_dir: Path, cli_config: dict | None) -> tuple[dict, list[str]]:
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    warnings: list[str] = []
+    run_yml = project_dir / "config" / "run.yml"
+
+    if run_yml.exists():
+        if yaml is None:
+            warnings.append("run.yml exists but PyYAML is unavailable; using defaults + CLI overrides.")
+        else:
+            data = yaml.safe_load(run_yml.read_text(encoding="utf-8")) or {}
+            if isinstance(data, dict):
+                _deep_update(cfg, data)
+    else:
+        warnings.append("config/run.yml not found; using defaults + CLI overrides.")
+
+    if cli_config:
+        _deep_update(cfg, cli_config)
+
+    cfg["docking_mode"] = str(cfg.get("docking_mode", "cpu")).lower()
+    return cfg, warnings
+
+
+def _write_preflight_log(paths: dict[str, Path], config: dict, config_hash: str, versions: dict, warnings: list[str]) -> None:
     lines = [
         f"python_executable={sys.executable}",
         f"python_version={sys.version}",
+        f"platform={platform.platform()}",
         f"cwd={Path.cwd()}",
         f"project_dir={paths['project']}",
-        f"PATH={os.environ.get('PATH', '')}",
-        "subprocess_cwd_rule=project_dir",
+        f"config_hash={config_hash}",
+        f"docking_mode={config.get('docking_mode')}",
+        f"resolved_receptor={config.get('resolved_receptor_path')}",
+        f"resolved_vina_cpu={config.get('resolved_vina_cpu_path')}",
+        f"resolved_vina_gpu={config.get('resolved_vina_gpu_path')}",
+        f"rdkit_version={versions.get('rdkit')}",
+        f"meeko_version={versions.get('meeko')}",
+        f"pandas_version={versions.get('pandas')}",
     ]
+    for warning in warnings:
+        lines.append(f"warning={warning}")
     paths["preflight_log"].parent.mkdir(parents=True, exist_ok=True)
     paths["preflight_log"].write_text("\n".join(lines) + "\n", encoding="utf-8", errors="replace")
 
 
-def _binary_exists(candidates: list[str], project_dir: Path) -> bool:
-    for name in candidates:
-        if (REPO_ROOT / name).exists() or (project_dir / name).exists():
-            return True
-    return False
+def _ensure_dirs(paths: dict[str, Path]) -> None:
+    for key in ("state_dir", "logs_dir", "engine_logs_dir", "results_dir", "structures_dir", "prepared_dir"):
+        paths[key].mkdir(parents=True, exist_ok=True)
 
 
-def _run_preflight_checks(project_dir: Path, config: dict) -> None:
-    if importlib.util.find_spec("rdkit") is None:
-        raise PreflightError(
-            "RDKit is required for Module 2. Install RDKit in this environment (recommended: conda-forge)."
-        )
-    if importlib.util.find_spec("meeko") is None:
-        raise PreflightError("Meeko is required for Module 3. Install it in this environment: pip install meeko")
-
-    mode = (config.get("docking_mode") or "cpu").lower()
-    if mode == "gpu":
-        if not _binary_exists(GPU_VINA_CANDIDATES, project_dir):
-            raise PreflightError(
-                "GPU docking selected but Vina-GPU binary was not found in repository root or project directory."
-            )
-    else:
-        if not _binary_exists(CPU_VINA_CANDIDATES, project_dir):
-            raise PreflightError(
-                "CPU docking selected but Vina executable was not found in repository root or project directory."
-            )
-
-
-def _preflight(project_dir: Path, config: dict) -> dict[str, Path]:
-    paths = _project_paths(project_dir)
-    if not project_dir.exists():
-        raise PreflightError(f"project_dir does not exist: {project_dir}")
+def _validate_project_contract(paths: dict[str, Path], config: dict, warnings: list[str]) -> None:
+    if not paths["project"].exists():
+        raise PreflightError(f"project_dir does not exist: {paths['project']}")
     if not paths["input_csv"].exists():
         raise PreflightError(f"Missing required input file: {paths['input_csv']}")
 
-    paths["state_dir"].mkdir(parents=True, exist_ok=True)
-    paths["logs_dir"].mkdir(parents=True, exist_ok=True)
-    _write_preflight_log(paths)
+    receptor_cfg = config.get("receptor_path") or "receptors/target_prepared.pdbqt"
+    receptor = Path(receptor_cfg)
+    if not receptor.is_absolute():
+        receptor = paths["project"] / receptor
+    config["resolved_receptor_path"] = str(receptor)
+    if not receptor.exists():
+        raise PreflightError(f"Missing receptor file: {receptor}")
 
+    if not paths["run_yml"].exists():
+        warnings.append("config/run.yml missing (allowed).")
+
+
+def _run_preflight_checks(project_dir: Path, config: dict, warnings: list[str]) -> dict:
+    if importlib.util.find_spec("rdkit") is None:
+        raise PreflightError(
+            "RDKit is required for Module 2. Install RDKit in this environment (recommended: conda-forge, 2025.3.6)."
+        )
+    if importlib.util.find_spec("meeko") is None:
+        raise PreflightError("Meeko is required for Module 3. Install it in this environment: pip install meeko==0.6.1")
+
+    cpu_path, cpu_warn = _resolve_tool_path(config.get("tools", {}).get("vina_cpu_path"), project_dir, CPU_VINA_CANDIDATES)
+    gpu_path, gpu_warn = _resolve_tool_path(config.get("tools", {}).get("vina_gpu_path"), project_dir, GPU_VINA_CANDIDATES)
+    config["resolved_vina_cpu_path"] = cpu_path
+    config["resolved_vina_gpu_path"] = gpu_path
+
+    if cpu_warn:
+        warnings.append(cpu_warn)
+    if gpu_warn:
+        warnings.append(gpu_warn)
+
+    mode = config.get("docking_mode", "cpu")
+    if mode == "gpu" and not gpu_path:
+        raise PreflightError("GPU docking selected but no Vina-GPU binary was found (tools.vina_gpu_path or fallback).")
+    if mode == "cpu" and not cpu_path:
+        raise PreflightError("CPU docking selected but no Vina binary was found (tools.vina_cpu_path or fallback).")
+
+    versions = _collect_versions()
+    warnings.extend(_version_warnings(versions))
+    if config.get("strict_versions") and _version_warnings(versions):
+        raise PreflightError("Strict version mode enabled and recommended toolchain versions were not met.")
+    return versions
+
+
+def _stamp_manifest_config_hash(paths: dict[str, Path], config_hash: str) -> None:
+    rows = read_manifest(paths["manifest_csv"])
+    if not rows:
+        return
+    for row in rows:
+        row["config_hash"] = config_hash
+    write_manifest(paths["manifest_csv"], rows)
+
+
+def _preflight(project_dir: Path, cli_config: dict | None) -> tuple[dict[str, Path], dict, str, dict, list[str]]:
+    paths = _project_paths(project_dir)
+    config, warnings = _load_project_config(project_dir, cli_config)
+    config_hash = _config_hash(config)
+
+    _ensure_dirs(paths)
     if not paths["manifest_csv"].exists():
         write_manifest(paths["manifest_csv"], [])
 
-    _run_preflight_checks(project_dir, config)
-    return paths
+    _validate_project_contract(paths, config, warnings)
+    versions = _run_preflight_checks(project_dir, config, warnings)
 
+    config_hash = _config_hash(config)
+    _write_preflight_log(paths, config, config_hash, versions, warnings)
+    return paths, config, config_hash, versions, warnings
+
+
+
+
+def _write_failure_preflight_log(paths: dict[str, Path], config: dict, error: Exception) -> None:
+    lines = [
+        f"python_executable={sys.executable}",
+        f"python_version={sys.version}",
+        f"platform={platform.platform()}",
+        f"cwd={Path.cwd()}",
+        f"project_dir={paths['project']}",
+        f"config_hash={_config_hash(config)}",
+        f"error={error}",
+    ]
+    paths["preflight_log"].parent.mkdir(parents=True, exist_ok=True)
+    paths["preflight_log"].write_text("\n".join(lines) + "\n", encoding="utf-8", errors="replace")
 
 def _history_append(status_path: Path, entry: dict) -> None:
     status = read_run_status(status_path)
@@ -117,15 +305,33 @@ def _run_docking(project_dir: Path, logs_dir: Path, config: dict):
     return docking_cpu.run(project_dir, logs_dir)
 
 
-def _preflight_failure(project_dir: Path, config: dict, error: Exception) -> dict:
+def _module_is_complete_for_all_ligands(paths: dict[str, Path], module_name: str) -> bool:
+    rows = read_manifest(paths["manifest_csv"])
+    if not rows:
+        return False
+
+    field_map = {
+        "module1_admet": "admet_status",
+        "module2_build3d": "sdf_status",
+        "module3_meeko": "pdbqt_status",
+        "module4_docking": "vina_status",
+    }
+    field = field_map[module_name]
+    return all((row.get(field) or "").upper() in {"PASS", "DONE", "OK", "SUCCESS"} for row in rows)
+
+
+def _preflight_failure(project_dir: Path, cli_config: dict | None, error: Exception) -> dict:
     paths = _project_paths(project_dir)
-    paths["state_dir"].mkdir(parents=True, exist_ok=True)
+    _ensure_dirs(paths)
+    config, _ = _load_project_config(project_dir, cli_config)
+    _write_failure_preflight_log(paths, config, error)
     status = update_run_status(
         paths["status_json"],
         phase="failed",
         failed_module="preflight",
         completed_modules=[],
-        config=config,
+        config_snapshot=config,
+        config_hash=_config_hash(config),
         error=str(error),
         runtime=_runtime_info(),
     )
@@ -139,11 +345,11 @@ def _preflight_failure(project_dir: Path, config: dict, error: Exception) -> dic
     }
 
 
-def _execute(project_dir: Path, config: dict, resume_mode: bool) -> dict:
+def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool) -> dict:
     try:
-        paths = _preflight(project_dir, config)
+        paths, config, config_hash, versions, warnings = _preflight(project_dir, cli_config)
     except PreflightError as exc:
-        return _preflight_failure(project_dir, config, exc)
+        return _preflight_failure(project_dir, cli_config, exc)
 
     status_path = paths["status_json"]
     current = read_run_status(status_path)
@@ -154,7 +360,10 @@ def _execute(project_dir: Path, config: dict, resume_mode: bool) -> dict:
         phase="running",
         failed_module=None,
         completed_modules=sorted(completed),
-        config=config,
+        config_snapshot=config,
+        config_hash=config_hash,
+        warnings=warnings,
+        tool_versions=versions,
         runtime=_runtime_info(),
     )
 
@@ -162,15 +371,18 @@ def _execute(project_dir: Path, config: dict, resume_mode: bool) -> dict:
     for module_name in MODULES:
         if module_name in completed:
             continue
+        if resume_mode and _module_is_complete_for_all_ligands(paths, module_name):
+            completed.add(module_name)
+            continue
 
         if module_name == "module1_admet":
-            result = admet.run(project_dir, paths["logs_dir"])
+            result = admet.run(project_dir, paths["engine_logs_dir"])
         elif module_name == "module2_build3d":
-            result = build3d.run(project_dir, paths["logs_dir"])
+            result = build3d.run(project_dir, paths["engine_logs_dir"])
         elif module_name == "module3_meeko":
-            result = meeko.run(project_dir, paths["logs_dir"])
+            result = meeko.run(project_dir, paths["engine_logs_dir"])
         else:
-            result = _run_docking(project_dir, paths["logs_dir"], config)
+            result = _run_docking(project_dir, paths["engine_logs_dir"], config)
 
         record = {
             "module": module_name,
@@ -191,6 +403,7 @@ def _execute(project_dir: Path, config: dict, resume_mode: bool) -> dict:
                 completed_modules=sorted(completed),
                 runtime=_runtime_info(),
             )
+            _stamp_manifest_config_hash(paths, config_hash)
             return {
                 "ok": False,
                 "failed_module": module_name,
@@ -202,6 +415,7 @@ def _execute(project_dir: Path, config: dict, resume_mode: bool) -> dict:
         completed.add(module_name)
         update_run_status(status_path, completed_modules=sorted(completed), runtime=_runtime_info())
 
+    _stamp_manifest_config_hash(paths, config_hash)
     update_run_status(
         status_path,
         phase="completed",
@@ -218,13 +432,36 @@ def _execute(project_dir: Path, config: dict, resume_mode: bool) -> dict:
 
 
 def run(project_dir: Path, config: dict) -> dict:
-    return _execute(project_dir=project_dir, config=config, resume_mode=False)
+    return _execute(project_dir=project_dir, cli_config=config, resume_mode=False)
+
+
+def validate(project_dir: Path, config: dict | None = None) -> dict:
+    try:
+        _, resolved, config_hash, versions, warnings = _preflight(project_dir, config)
+        return {
+            "ok": True,
+            "config_snapshot": resolved,
+            "config_hash": config_hash,
+            "tool_versions": versions,
+            "warnings": warnings,
+            "runtime": _runtime_info(),
+        }
+    except PreflightError as exc:
+        paths = _project_paths(project_dir)
+        _ensure_dirs(paths)
+        resolved, _ = _load_project_config(project_dir, config)
+        _write_failure_preflight_log(paths, resolved, exc)
+        return {
+            "ok": False,
+            "error": str(exc),
+            "runtime": _runtime_info(),
+        }
 
 
 def resume(project_dir: Path) -> dict:
     current = read_run_status(project_dir / "state" / "run_status.json")
-    config = current.get("config", {})
-    return _execute(project_dir=project_dir, config=config, resume_mode=True)
+    config = current.get("config_snapshot") or current.get("config") or {}
+    return _execute(project_dir=project_dir, cli_config=config, resume_mode=True)
 
 
 def status(project_dir: Path) -> dict:

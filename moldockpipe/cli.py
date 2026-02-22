@@ -23,6 +23,14 @@ def run(project_dir: Path, docking_mode: str):
 
 @app.command()
 @click.argument("project_dir", type=click.Path(path_type=Path))
+@click.option("--docking-mode", default="cpu", type=click.Choice(["cpu", "gpu"], case_sensitive=False))
+def validate(project_dir: Path, docking_mode: str):
+    result = engine.validate(project_dir, {"docking_mode": docking_mode})
+    click.echo(json.dumps(result, indent=2))
+
+
+@app.command()
+@click.argument("project_dir", type=click.Path(path_type=Path))
 def resume(project_dir: Path):
     result = engine.resume(project_dir)
     click.echo(json.dumps(result, indent=2))
@@ -42,5 +50,9 @@ def export_report(project_dir: Path):
     click.echo(json.dumps(result, indent=2))
 
 
-if __name__ == "__main__":
+def main() -> None:
     app()
+
+
+if __name__ == "__main__":
+    main()

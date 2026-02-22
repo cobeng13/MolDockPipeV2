@@ -6,13 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "moldockpipe"
 version = "0.1.0"
 description = "Engine + CLI orchestrator for MolDockPipe"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
   "click>=8.0",
+  "pyyaml>=6.0",
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "meeko==0.6.1",
 ]
 
 [project.scripts]
-moldock = "moldockpipe.cli:app"
+moldock = "moldockpipe.cli:main"
 
 [tool.setuptools]
 packages = ["moldockpipe", "moldockpipe.adapters", "moldockpipe.state"]
