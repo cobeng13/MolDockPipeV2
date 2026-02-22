@@ -78,6 +78,7 @@ def _config_hash(config: dict) -> str:
 
 
 def _project_paths(project_dir: Path) -> dict[str, Path]:
+    project_dir = project_dir.resolve()
     return {
         "project": project_dir,
         "input_csv": project_dir / "input" / "input.csv",
@@ -169,24 +170,39 @@ def _version_warnings(versions: dict) -> list[str]:
     return warnings
 
 
+
+
+def normalize_path(project_dir_abs: Path, platform_root_abs: Path, user_path: str | None, mode: str) -> Path | None:
+    if not user_path:
+        return None
+    p = Path(user_path).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+
+    project_candidate = (project_dir_abs / p).resolve()
+    if project_candidate.exists() or mode == "receptor":
+        return project_candidate
+
+    if mode == "tool":
+        platform_candidate = (platform_root_abs / p).resolve()
+        if platform_candidate.exists():
+            return platform_candidate
+    return project_candidate
+
 def _resolve_tool_path(configured: str | None, project_dir: Path, candidates: list[str]) -> tuple[str | None, str | None]:
+    project_dir_abs = project_dir.resolve()
+    platform_root_abs = REPO_ROOT.resolve()
     if configured:
-        p = Path(configured)
-        if p.is_absolute():
-            return (str(p.resolve()) if p.exists() else None), None
-        project_p = (project_dir / p).resolve()
-        if project_p.exists():
-            return str(project_p), None
-        platform_p = (REPO_ROOT / p).resolve()
-        if platform_p.exists():
-            return str(platform_p), None
+        resolved = normalize_path(project_dir_abs, platform_root_abs, configured, mode="tool")
+        if resolved and resolved.exists():
+            return str(resolved), None
         return None, f"Configured tool path not found: {configured}"
 
     for candidate in candidates:
-        for base in (project_dir, REPO_ROOT):
-            p = base / candidate
+        for base in (project_dir_abs, platform_root_abs):
+            p = (base / candidate).resolve()
             if p.exists():
-                return str(p.resolve()), f"Configured path missing; used fallback candidate '{candidate}'."
+                return str(p), f"Configured path missing; used fallback candidate '{candidate}'."
         found = shutil.which(candidate)
         if found:
             return found, f"Configured path missing; used PATH fallback '{candidate}'."
@@ -298,12 +314,12 @@ def _validate_project_contract(paths: dict[str, Path], config: dict, warnings: l
         raise PreflightError(f"Missing required input file: {paths['input_csv']}")
 
     receptor_cfg = config.get("receptor_path") or "receptors/target_prepared.pdbqt"
-    receptor = Path(receptor_cfg)
-    if not receptor.is_absolute():
-        receptor = paths["project"] / receptor
-    config["resolved_receptor_path"] = str(receptor)
+    receptor = normalize_path(paths["project"].resolve(), REPO_ROOT.resolve(), receptor_cfg, mode="receptor")
+    if receptor is None:
+        raise PreflightError("Missing receptor configuration path.")
+    config["resolved_receptor_path"] = str(receptor.resolve())
     if not receptor.exists():
-        raise PreflightError(f"Missing receptor file: {receptor}")
+        raise PreflightError(f"Missing receptor file: {receptor.resolve()}")
 
     if not paths["run_yml"].exists():
         warnings.append("config/run.yml missing (allowed).")

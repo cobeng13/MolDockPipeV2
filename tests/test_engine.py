@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from moldockpipe import engine
 
@@ -118,3 +119,20 @@ def test_config_hash_deterministic(tmp_path, monkeypatch):
 
     assert v1["config_hash"] == v2["config_hash"]
     assert v1["config_hash"] != v3["config_hash"]
+
+
+def test_receptor_path_normalization_no_duplication(tmp_path):
+    project_dir = (tmp_path / "projects" / "example_project")
+    receptor_file = project_dir / "receptors" / "target_prepared.pdbqt"
+    receptor_file.parent.mkdir(parents=True, exist_ok=True)
+    receptor_file.write_text("REMARK receptor\n", encoding="utf-8")
+
+    resolved = engine.normalize_path(
+        project_dir_abs=project_dir.resolve(),
+        platform_root_abs=Path.cwd().resolve(),
+        user_path="receptors/target_prepared.pdbqt",
+        mode="receptor",
+    )
+
+    assert resolved == receptor_file.resolve()
+    assert "projects/example_project/projects/example_project" not in resolved.as_posix()
