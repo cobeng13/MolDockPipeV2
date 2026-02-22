@@ -2,7 +2,7 @@
 # Module 4b (GPU) — Mini-batch with idempotent resume + graceful stop + atom-type validation
 
 from __future__ import annotations
-import csv, hashlib, re, shlex, shutil, signal, subprocess
+import argparse, csv, hashlib, os, re, shlex, shutil, signal, subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple, Iterable
@@ -101,11 +101,24 @@ def pdbqt_has_only_allowed_types(path: Path) -> tuple[bool,str]:
         return False,"Unsupported AD4 atom types: "+",".join(sorted(set(bad)))
     return True,"OK"
 
-def find_vinagpu_binary()->Path:
+def find_vinagpu_binary(vina_arg: str | None = None)->Path:
+    provided = vina_arg or os.environ.get("MOLDOCK_VINA_GPU_PATH")
+    if provided:
+        p = Path(provided).expanduser().resolve()
+        if p.exists():
+            return p
+        raise SystemExit(
+            f"❌ Vina-GPU binary not found at resolved path: {p}\n"
+            f"   Check configured tools.vina_gpu_path or place binary under platform tools/ folder."
+        )
+
     for name in ("Vina-GPU+.exe","Vina-GPU+_K.exe","Vina-GPU.exe","vina-gpu.exe","vina-gpu"):
         p = BASE / name
         if p.exists(): return p.resolve()
-    raise SystemExit("❌ Vina-GPU binary not found in project root.")
+    raise SystemExit(
+        "❌ Vina-GPU binary not found via --vina, MOLDOCK_VINA_GPU_PATH, or legacy project-root candidates. "
+        "Set tools.vina_gpu_path (recommended default under <platform_root>/tools/)."
+    )
 
 def parse_cfg(path: Path)->Dict[str,str]:
     if not path.exists(): raise SystemExit(f"❌ Config not found: {path}")
@@ -204,7 +217,11 @@ def run_batch(vgpu:Path, cfg_file:Path, lig_dir:Path, out_dir:Path, gcfg:dict)->
 
 # --- Main ---
 def main():
-    vgpu = find_vinagpu_binary()
+    parser = argparse.ArgumentParser(description="Module 4b GPU docking")
+    parser.add_argument("--vina", default=None, help="Explicit path to Vina GPU binary")
+    args = parser.parse_args()
+
+    vgpu = find_vinagpu_binary(args.vina)
     box,gcfg,receptor,chash,lig_dir,out_dir,cfg_file = load_runtime(vgpu)
 
     all_ligs = sorted(lig_dir.glob("*.pdbqt"))

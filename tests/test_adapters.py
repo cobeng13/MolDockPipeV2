@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from moldockpipe.adapters import admet
+from moldockpipe.adapters import admet, docking_cpu
 from moldockpipe.adapters.common import run_script
 
 
@@ -47,3 +47,20 @@ def test_subprocess_runner_handles_emoji_output(tmp_path, monkeypatch):
     assert result.ok
     log_text = Path(result.stdout_log).read_text(encoding="utf-8")
     assert "✅" in log_text
+
+
+def test_docking_cpu_passes_explicit_vina(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run_script(module, script_name, project_dir, logs_dir, args=None, extra_env=None):
+        captured["module"] = module
+        captured["args"] = args
+        captured["env"] = extra_env
+        return SimpleNamespace(returncode=0, stdout_log="o", stderr_log="e", ok=True, command=[])
+
+    monkeypatch.setattr("moldockpipe.adapters.docking_cpu.run_script", fake_run_script)
+    res = docking_cpu.run(tmp_path, tmp_path / "logs", vina_path="C:/tools/vina.exe")
+    assert res.returncode == 0
+    assert captured["module"] == "module4a_cpu"
+    assert captured["args"] == ["--vina", "C:/tools/vina.exe"]
+    assert captured["env"]["MOLDOCK_VINA_CPU_PATH"] == "C:/tools/vina.exe"

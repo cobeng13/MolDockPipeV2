@@ -6,30 +6,22 @@ This repository provides an orchestration layer around canonical Module 1–4 sc
 
 Use one environment only (no mixing system Python + venv/conda).
 
-### Recommended conda toolchain (validated pins)
-
 ```bash
-conda env create -f environment.windows.yml
+conda env create -f environment.yml
 conda activate moldockpipe
-moldock --help
+python -m pip install -e .
 ```
 
-Pinned strategy:
+Pinned strategy represented in `environment.yml`:
 - Python 3.11
-- RDKit 2025.3.6 (conda-forge)
+- RDKit 2025.03.* (conda-forge, conda-managed)
 - Meeko 0.6.1
-- Pandas installed
+- Pandas / NumPy / PyYAML / Click
 
-### Pip fallback
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install --upgrade pip wheel
-pip install -e .
-```
-
-If using pip-only, keep RDKit pinned/recommended to `2025.3.6` where available.
+Option 1 (central tools folder):
+- Place binaries under platform root: `tools/`
+- Example CPU binary: `tools/vina_1.2.7_win.exe`
+- Projects stay lightweight (no per-project binary copies required).
 
 ## CLI
 
@@ -60,10 +52,10 @@ Preflight validates:
 - receptor path (`receptor_path`, default `receptors/target_prepared.pdbqt`)
 - required output directories (`state/`, `logs/`, `logs/engine/`, `results/`, `3D_Structures/`, `prepared_ligands/`)
 - required dependencies for pipeline path (RDKit, Meeko)
-- docking binary resolution for configured mode:
-  - `tools.vina_cpu_path`
-  - `tools.vina_gpu_path`
-  - fallback candidate search only if config path missing
+- docking binary resolution for configured mode (config-first):
+  - `tools.vina_cpu_path` (default `tools/vina_1.2.7_win.exe`)
+  - `tools.vina_gpu_path` (default `tools/vina-gpu.exe`)
+  - relative path resolution order: project dir override -> platform root -> fallback candidate discovery
 
 Preflight writes UTF-8 audit log to `logs/preflight.log` including:
 - `sys.executable`, `sys.version`, platform

@@ -15,9 +15,11 @@ Run:  python "Module 4.py"
 """
 
 from __future__ import annotations
+import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import shlex
 import signal
@@ -105,10 +107,23 @@ def save_manifest(manifest: dict[str, dict]) -> None:
     write_csv(FILE_MANIFEST, rows, MANIFEST_FIELDS)
 
 # -------------- Config (from Vina dir) --------------
-def find_vina_binary() -> Path:
+def find_vina_binary(vina_arg: str | None = None) -> Path:
     """
-    Try common names in project root; otherwise require explicit path here if you prefer.
+    Resolve Vina path in this order:
+      1) --vina argument
+      2) MOLDOCK_VINA_CPU_PATH env var
+      3) legacy project-root discovery fallback
     """
+    provided = vina_arg or os.environ.get("MOLDOCK_VINA_CPU_PATH")
+    if provided:
+        vp = Path(provided).expanduser().resolve()
+        if not vp.exists():
+            raise SystemExit(
+                f"❌ Vina binary not found at resolved path: {vp}\n"
+                f"   Check configured tools.vina_cpu_path or place binary under platform tools/ folder."
+            )
+        return vp
+
     candidates = [
         BASE / "vina_1.2.7_win.exe",
         BASE / "vina.exe",
@@ -117,7 +132,10 @@ def find_vina_binary() -> Path:
     for c in candidates:
         if c.exists():
             return c.resolve()
-    raise SystemExit("❌ Could not find Vina binary in project root (e.g., vina_1.2.7_win.exe). Place it next to this script.")
+    raise SystemExit(
+        "❌ Could not find Vina binary via --vina, MOLDOCK_VINA_CPU_PATH, or legacy project-root candidates. "
+        "Set tools.vina_cpu_path (recommended default under <platform_root>/tools/)."
+    )
 
 def parse_vina_config(cfg_path: Path) -> Dict[str, str]:
     """
@@ -324,7 +342,11 @@ def build_and_write_summaries_from_manifest(manifest: dict[str, dict]) -> None:
 
 # -------------- Main --------------
 def main():
-    vina_bin = find_vina_binary()
+    parser = argparse.ArgumentParser(description="Module 4a CPU docking")
+    parser.add_argument("--vina", default=None, help="Explicit path to Vina CPU binary")
+    args = parser.parse_args()
+
+    vina_bin = find_vina_binary(args.vina)
     box, vcfg, receptor, chash = load_runtime_config(vina_bin)
 
     ligs = sorted(DIR_PREP.glob("*.pdbqt"))

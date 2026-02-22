@@ -32,7 +32,7 @@ def test_engine_run_then_status(tmp_path, monkeypatch):
     monkeypatch.setattr(engine.admet, "run", lambda p, l: Ok())
     monkeypatch.setattr(engine.build3d, "run", lambda p, l: Ok())
     monkeypatch.setattr(engine.meeko, "run", lambda p, l: Ok())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l: Ok())
+    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l, **k: Ok())
 
     res = engine.run(tmp_path, {"docking_mode": "cpu"})
     assert res["ok"] is True
@@ -79,7 +79,7 @@ def test_engine_resume_skips_completed(tmp_path, monkeypatch):
     monkeypatch.setattr(engine.admet, "run", admet_run)
     monkeypatch.setattr(engine.build3d, "run", lambda p, l: Ok())
     monkeypatch.setattr(engine.meeko, "run", lambda p, l: Ok())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l: Ok())
+    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l, **k: Ok())
 
     res = engine.resume(tmp_path)
     assert res["ok"] is True

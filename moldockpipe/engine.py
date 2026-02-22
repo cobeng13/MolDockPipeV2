@@ -32,8 +32,8 @@ DEFAULT_CONFIG = {
     "strict_versions": False,
     "receptor_path": "receptors/target_prepared.pdbqt",
     "tools": {
-        "vina_cpu_path": None,
-        "vina_gpu_path": None,
+        "vina_cpu_path": "tools/vina_1.2.7_win.exe",
+        "vina_gpu_path": "tools/vina-gpu.exe",
     },
 }
 
@@ -42,7 +42,7 @@ GPU_VINA_CANDIDATES = ["Vina-GPU+.exe", "Vina-GPU+_K.exe", "Vina-GPU.exe", "vina
 
 RECOMMENDED = {
     "python": "3.11",
-    "rdkit": "2025.3.6",
+    "rdkit": "2025.03.",
     "meeko": "0.6.1",
 }
 
@@ -121,13 +121,41 @@ def _collect_versions() -> dict:
     }
 
 
+
+
+def _normalize_version_triplet(value: str | None) -> tuple[int, ...] | None:
+    if not value:
+        return None
+    cleaned = str(value).strip().split("+")[0]
+    parts = []
+    for token in cleaned.replace("-", ".").split("."):
+        if token.isdigit():
+            parts.append(int(token))
+        else:
+            digits = "".join(ch for ch in token if ch.isdigit())
+            if digits:
+                parts.append(int(digits))
+    return tuple(parts) if parts else None
+
+
+def _rdkit_matches_recommended(value: str | None) -> bool:
+    trip = _normalize_version_triplet(value)
+    return bool(trip and len(trip) >= 2 and trip[0] == 2025 and trip[1] == 3)
+
+
+def _meeko_matches_recommended(value: str | None) -> bool:
+    trip = _normalize_version_triplet(value)
+    return bool(trip and tuple(trip[:3]) == (0, 6, 1))
+
 def _version_warnings(versions: dict) -> list[str]:
     warnings = []
     if not versions["python"].startswith(RECOMMENDED["python"]):
         warnings.append(f"Recommended Python is {RECOMMENDED['python']} (detected {versions['python']}).")
-    if versions.get("rdkit") and versions["rdkit"] != RECOMMENDED["rdkit"]:
-        warnings.append(f"Recommended RDKit is {RECOMMENDED['rdkit']} (detected {versions['rdkit']}).")
-    if versions.get("meeko") and versions["meeko"] != RECOMMENDED["meeko"]:
+    if versions.get("rdkit") and not _rdkit_matches_recommended(versions["rdkit"]):
+        warnings.append(
+            f"Recommended RDKit series is 2025.03.* (detected {versions['rdkit']})."
+        )
+    if versions.get("meeko") and not _meeko_matches_recommended(versions["meeko"]):
         warnings.append(f"Recommended Meeko is {RECOMMENDED['meeko']} (detected {versions['meeko']}).")
     return warnings
 
@@ -135,9 +163,15 @@ def _version_warnings(versions: dict) -> list[str]:
 def _resolve_tool_path(configured: str | None, project_dir: Path, candidates: list[str]) -> tuple[str | None, str | None]:
     if configured:
         p = Path(configured)
-        if not p.is_absolute():
-            p = project_dir / p
-        return (str(p.resolve()) if p.exists() else None), None
+        if p.is_absolute():
+            return (str(p.resolve()) if p.exists() else None), None
+        project_p = (project_dir / p).resolve()
+        if project_p.exists():
+            return str(project_p), None
+        platform_p = (REPO_ROOT / p).resolve()
+        if platform_p.exists():
+            return str(platform_p), None
+        return None, f"Configured tool path not found: {configured}"
 
     for candidate in candidates:
         for base in (project_dir, REPO_ROOT):
@@ -220,7 +254,7 @@ def _validate_project_contract(paths: dict[str, Path], config: dict, warnings: l
 def _run_preflight_checks(project_dir: Path, config: dict, warnings: list[str]) -> dict:
     if importlib.util.find_spec("rdkit") is None:
         raise PreflightError(
-            "RDKit is required for Module 2. Install RDKit in this environment (recommended: conda-forge, 2025.3.6)."
+            "RDKit is required for Module 2. Install RDKit in this environment (recommended: conda-forge, 2025.03.*)."
         )
     if importlib.util.find_spec("meeko") is None:
         raise PreflightError("Meeko is required for Module 3. Install it in this environment: pip install meeko==0.6.1")
@@ -237,9 +271,17 @@ def _run_preflight_checks(project_dir: Path, config: dict, warnings: list[str]) 
 
     mode = config.get("docking_mode", "cpu")
     if mode == "gpu" and not gpu_path:
-        raise PreflightError("GPU docking selected but no Vina-GPU binary was found (tools.vina_gpu_path or fallback).")
+        attempted = config.get("tools", {}).get("vina_gpu_path") or "tools/vina-gpu.exe"
+        raise PreflightError(
+            f"GPU docking selected but no Vina-GPU binary was found. Checked configured tools.vina_gpu_path={attempted}. "
+            f"Default Option 1 location is {REPO_ROOT / 'tools'}."
+        )
     if mode == "cpu" and not cpu_path:
-        raise PreflightError("CPU docking selected but no Vina binary was found (tools.vina_cpu_path or fallback).")
+        attempted = config.get("tools", {}).get("vina_cpu_path") or "tools/vina_1.2.7_win.exe"
+        raise PreflightError(
+            f"CPU docking selected but no Vina binary was found. Checked configured tools.vina_cpu_path={attempted}. "
+            f"Default Option 1 location is {REPO_ROOT / 'tools'}."
+        )
 
     versions = _collect_versions()
     warnings.extend(_version_warnings(versions))
@@ -299,8 +341,8 @@ def _history_append(status_path: Path, entry: dict) -> None:
 def _run_docking(project_dir: Path, logs_dir: Path, config: dict):
     mode = (config.get("docking_mode") or "cpu").lower()
     if mode == "gpu":
-        return docking_gpu.run(project_dir, logs_dir)
-    return docking_cpu.run(project_dir, logs_dir)
+        return docking_gpu.run(project_dir, logs_dir, vina_path=config.get("resolved_vina_gpu_path"))
+    return docking_cpu.run(project_dir, logs_dir, vina_path=config.get("resolved_vina_cpu_path"))
 
 
 def _module_is_complete_for_all_ligands(paths: dict[str, Path], module_name: str) -> bool:
@@ -332,6 +374,9 @@ def _preflight_failure(project_dir: Path, cli_config: dict | None, error: Except
         config_hash=_config_hash(config),
         error=str(error),
         runtime=_runtime_info(),
+        resolved_vina_cpu_path=config.get("resolved_vina_cpu_path"),
+        resolved_vina_gpu_path=config.get("resolved_vina_gpu_path"),
+        resolved_receptor_path=config.get("resolved_receptor_path"),
     )
     return {
         "ok": False,
@@ -363,6 +408,9 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool) -> d
         warnings=warnings,
         tool_versions=versions,
         runtime=_runtime_info(),
+        resolved_vina_cpu_path=config.get("resolved_vina_cpu_path"),
+        resolved_vina_gpu_path=config.get("resolved_vina_gpu_path"),
+        resolved_receptor_path=config.get("resolved_receptor_path"),
     )
 
     results = []

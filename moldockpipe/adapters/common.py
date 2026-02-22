@@ -22,7 +22,14 @@ class AdapterResult:
         return self.returncode == 0
 
 
-def run_script(module: str, script_name: str, project_dir: Path, logs_dir: Path) -> AdapterResult:
+def run_script(
+    module: str,
+    script_name: str,
+    project_dir: Path,
+    logs_dir: Path,
+    args: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> AdapterResult:
     script_path = REPO_ROOT / script_name
     if not script_path.exists():
         raise FileNotFoundError(f"Cannot find canonical script: {script_path}")
@@ -37,8 +44,10 @@ def run_script(module: str, script_name: str, project_dir: Path, logs_dir: Path)
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env.setdefault("PYTHONLEGACYWINDOWSSTDIO", "0")
+    if extra_env:
+        env.update({k: str(v) for k, v in extra_env.items()})
 
-    cmd = [sys.executable, str(script_path)]
+    cmd = [sys.executable, str(script_path), *(args or [])]
     proc = subprocess.run(
         cmd,
         cwd=project_dir,
