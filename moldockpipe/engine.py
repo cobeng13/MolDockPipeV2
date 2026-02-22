@@ -42,7 +42,7 @@ GPU_VINA_CANDIDATES = ["Vina-GPU+.exe", "Vina-GPU+_K.exe", "Vina-GPU.exe", "vina
 
 RECOMMENDED = {
     "python": "3.11",
-    "rdkit": "2025.03.",
+    "rdkit": "2025.3.6",
     "meeko": "0.6.1",
 }
 
@@ -125,10 +125,8 @@ def _version_warnings(versions: dict) -> list[str]:
     warnings = []
     if not versions["python"].startswith(RECOMMENDED["python"]):
         warnings.append(f"Recommended Python is {RECOMMENDED['python']} (detected {versions['python']}).")
-    if versions.get("rdkit") and not str(versions["rdkit"]).startswith(RECOMMENDED["rdkit"]):
-        warnings.append(
-            f"Recommended RDKit series is {RECOMMENDED['rdkit']}* (detected {versions['rdkit']})."
-        )
+    if versions.get("rdkit") and versions["rdkit"] != RECOMMENDED["rdkit"]:
+        warnings.append(f"Recommended RDKit is {RECOMMENDED['rdkit']} (detected {versions['rdkit']}).")
     if versions.get("meeko") and versions["meeko"] != RECOMMENDED["meeko"]:
         warnings.append(f"Recommended Meeko is {RECOMMENDED['meeko']} (detected {versions['meeko']}).")
     return warnings

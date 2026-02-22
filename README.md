@@ -6,17 +6,30 @@ This repository provides an orchestration layer around canonical Module 1–4 sc
 
 Use one environment only (no mixing system Python + venv/conda).
 
+### Recommended conda toolchain (validated pins)
+
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.windows.yml
 conda activate moldockpipe
-python -m pip install -e .
+moldock --help
 ```
 
-Pinned strategy represented in `environment.yml`:
+Pinned strategy:
 - Python 3.11
-- RDKit 2025.03.* (conda-forge, conda-managed)
+- RDKit 2025.3.6 (conda-forge)
 - Meeko 0.6.1
-- Pandas / NumPy / PyYAML / Click
+- Pandas installed
+
+### Pip fallback
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install --upgrade pip wheel
+pip install -e .
+```
+
+If using pip-only, keep RDKit pinned/recommended to `2025.3.6` where available.
 
 ## CLI
 
