@@ -1,0 +1,13 @@
+name: moldockpipe
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - rdkit=2025.03.*
+  - pip
+  - pip:
+      - meeko==0.6.1
+      - pandas
+      - numpy
+      - pyyaml
+      - click
