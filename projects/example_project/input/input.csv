@@ -1,3 +1,2 @@
-id,smiles,notes
-aspirin,CC(=O)OC1=CC=CC=C1C(=O)O,example ligand
-caffeine,CN1C=NC2=C1N(C)C(=O)N(C)C(=O)N2C,example ligand
+id,smiles,notes,params_json
+11683470,CC1=CC=C(C=C1)OC2=C(C=C(C=C2)[N+](=O)[O-])S(=O)(=O)NC(=O)NC3CCCCC3,,
