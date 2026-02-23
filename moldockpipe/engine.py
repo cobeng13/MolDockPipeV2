@@ -318,7 +318,7 @@ def is_done(value) -> bool:
     if value is None:
         return False
     s = str(value).strip().upper()
-    return s in {"DONE", "OK", "SUCCESS", "PASSED"}
+    return s in {"DONE", "OK", "SUCCESS", "PASSED", "PASS"}
 
 
 def is_failed(value) -> bool:
@@ -413,6 +413,125 @@ def _init_status(run_id: str, config_hash: str, config_snapshot: dict, resolved:
     }
 
 
+def _sha1_of_file(path: Path) -> str:
+    h = hashlib.sha1()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _input_ids(paths: dict[str, Path]) -> set[str]:
+    ids: set[str] = set()
+    if not paths["input_csv"].exists():
+        return ids
+    with paths["input_csv"].open("r", encoding="utf-8", newline="") as f:
+        for r in csv.DictReader(f):
+            smiles = (r.get("smiles") or "").strip()
+            if not smiles:
+                continue
+            rid = (r.get("id") or "").strip()
+            if not rid:
+                rid = f"UNK_{hashlib.sha1(smiles.encode('utf-8')).hexdigest()[:10]}"
+            ids.add(rid)
+    return ids
+
+
+def _path_exists(path_value: str | None, project_dir: Path) -> bool:
+    p = (path_value or "").strip()
+    if not p:
+        return False
+    path = Path(p)
+    if not path.is_absolute():
+        path = (project_dir / path).resolve()
+    return path.exists()
+
+
+def _plan_work(
+    paths: dict[str, Path],
+    resolved: dict,
+    versions: dict,
+    config_hash: str,
+    *,
+    force: bool = False,
+    rerun_failed_only: bool = False,
+    from_module: int = 1,
+) -> dict[str, list[str]]:
+    rows = read_manifest(paths["manifest_csv"])
+    by_id = {str((r.get("id") or "")).strip(): r for r in rows if str((r.get("id") or "")).strip()}
+    ids = _input_ids(paths)
+    receptor_sha1 = ""
+    receptor = resolved.get("receptor_path")
+    if receptor:
+        rp = Path(receptor)
+        if rp.exists():
+            receptor_sha1 = _sha1_of_file(rp)
+
+    tools = {
+        "rdkit": str(versions.get("rdkit") or ""),
+        "meeko": str(versions.get("meeko") or ""),
+        "vina": str(resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path") or ""),
+    }
+
+    plan = {m: [] for m in MODULES}
+    for lig_id in sorted(ids):
+        row = by_id.get(lig_id, {})
+        admet = (row.get("admet_status") or "").strip()
+        sdf = (row.get("sdf_status") or "").strip()
+        pdbqt = (row.get("pdbqt_status") or "").strip()
+        vina = (row.get("vina_status") or "").strip()
+
+        row_cfg = str(row.get("config_hash") or "")
+        stale_vina = (row_cfg and row_cfg != config_hash)
+        stale_vina = stale_vina or (str(row.get("receptor_sha1") or "") not in {"", receptor_sha1})
+        stale_vina = stale_vina or (str(row.get("tools_vina") or "") not in {"", tools["vina"]})
+        stale_pdbqt = str(row.get("tools_meeko") or "") not in {"", tools["meeko"]}
+        stale_sdf = str(row.get("tools_rdkit") or "") not in {"", tools["rdkit"]}
+
+        if force or (from_module <= 1 and (not admet or (row_cfg and row_cfg != config_hash))):
+            plan["module1_admet"].append(lig_id)
+
+        admet_ok = is_admet_pass(admet) or (admet == "")
+        sdf_missing = not _path_exists(row.get("sdf_path"), paths["project"])
+        pdbqt_missing = not _path_exists(row.get("pdbqt_path"), paths["project"])
+        vina_missing = not _path_exists(row.get("vina_pose"), paths["project"])
+
+        if from_module <= 2 and admet_ok:
+            if force:
+                plan["module2_build3d"].append(lig_id)
+            elif rerun_failed_only:
+                if is_failed(sdf):
+                    plan["module2_build3d"].append(lig_id)
+            elif (not is_done(sdf)) or sdf_missing or stale_sdf:
+                plan["module2_build3d"].append(lig_id)
+
+        if from_module <= 3 and (is_done(sdf) or (sdf == "" and not rerun_failed_only)):
+            if force:
+                plan["module3_meeko"].append(lig_id)
+            elif rerun_failed_only:
+                if is_failed(pdbqt):
+                    plan["module3_meeko"].append(lig_id)
+            elif (not is_done(pdbqt)) or pdbqt_missing or stale_pdbqt or stale_sdf:
+                plan["module3_meeko"].append(lig_id)
+
+        if from_module <= 4 and (is_done(pdbqt) or (pdbqt == "" and not rerun_failed_only)):
+            if force:
+                plan["module4_docking"].append(lig_id)
+            elif rerun_failed_only:
+                if is_failed(vina):
+                    plan["module4_docking"].append(lig_id)
+            elif (not is_done(vina)) or vina_missing or stale_vina or stale_pdbqt or stale_sdf:
+                plan["module4_docking"].append(lig_id)
+
+    return plan
+
+
+def _write_work_ids_file(paths: dict[str, Path], module_name: str, ids: list[str]) -> Path:
+    path = paths["state_dir"] / f"work_ids_{module_name}.txt"
+    path.write_text("\n".join(ids) + ("\n" if ids else ""), encoding="utf-8")
+    return path
+
+
 def _stamp_manifest_config_hash(paths: dict[str, Path], config_hash: str) -> None:
     rows = read_manifest(paths["manifest_csv"])
     for r in rows:
@@ -421,13 +540,13 @@ def _stamp_manifest_config_hash(paths: dict[str, Path], config_hash: str) -> Non
         write_manifest(paths["manifest_csv"], rows)
 
 
-def _run_module(module_name: str, project_dir: Path, logs_dir: Path, resolved: dict, config_hash: str):
+def _run_module(module_name: str, project_dir: Path, logs_dir: Path, resolved: dict, config_hash: str, only_ids_path: Path | None = None):
     if module_name == "module1_admet":
-        return admet.run(project_dir, logs_dir)
+        return admet.run(project_dir, logs_dir, only_ids_path=only_ids_path)
     if module_name == "module2_build3d":
-        return build3d.run(project_dir, logs_dir)
+        return build3d.run(project_dir, logs_dir, only_ids_path=only_ids_path)
     if module_name == "module3_meeko":
-        return meeko.run(project_dir, logs_dir)
+        return meeko.run(project_dir, logs_dir, only_ids_path=only_ids_path)
 
     docking = resolved.get("docking_params")
     box = resolved.get("box")
@@ -444,10 +563,10 @@ def _run_module(module_name: str, project_dir: Path, logs_dir: Path, resolved: d
             "num_modes": docking["num_modes"],
             "energy_range": docking["energy_range"],
         }
-    return docking_gpu.run(project_dir, logs_dir, vina_path=resolved.get("vina_gpu_path"), receptor_path=resolved.get("receptor_path"), docking_params=dock, config_hash=config_hash) if resolved.get("vina_gpu_path") else docking_cpu.run(project_dir, logs_dir, vina_path=resolved.get("vina_cpu_path"), receptor_path=resolved.get("receptor_path"), docking_params=dock, config_hash=config_hash)
+    return docking_gpu.run(project_dir, logs_dir, vina_path=resolved.get("vina_gpu_path"), receptor_path=resolved.get("receptor_path"), docking_params=dock, config_hash=config_hash, only_ids_path=only_ids_path) if resolved.get("vina_gpu_path") else docking_cpu.run(project_dir, logs_dir, vina_path=resolved.get("vina_cpu_path"), receptor_path=resolved.get("receptor_path"), docking_params=dock, config_hash=config_hash, only_ids_path=only_ids_path)
 
 
-def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool) -> dict:
+def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, force: bool = False, rerun_failed_only: bool = False, from_module: int = 1) -> dict:
     paths = _project_paths(project_dir)
     _ensure_dirs(paths)
     raw_config, warnings = _load_project_config(paths["project"], cli_config)
@@ -492,11 +611,29 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool) -> d
             status["completed_modules"] = sorted(completed)
             continue
 
+        pending_ids = _plan_work(paths, resolved, versions, config_hash, force=force, rerun_failed_only=rerun_failed_only, from_module=from_module).get(module_name, [])
+        if not force and len(pending_ids) == 0:
+            status["modules"][module_name].update({"status": "skipped", "started_at": None, "finished_at": None, "duration_seconds": 0.0})
+            completed.add(module_name)
+            status["completed_modules"] = sorted(completed)
+            status.update({
+                "phase": module_name,
+                "phase_detail": f"Skipping {module_name} (0 pending)",
+                "progress": {
+                    "current_module": module_name,
+                    "module_index": idx,
+                    "module_total": len(MODULES),
+                    "percent": int((idx / len(MODULES)) * 100),
+                },
+            })
+            update_run_status(paths["status_json"], **status)
+            continue
+
         started = datetime.now(timezone.utc)
         status.update(
             {
                 "phase": module_name,
-                "phase_detail": MODULE_LABELS[module_name],
+                "phase_detail": f"{MODULE_LABELS[module_name]} ({len(pending_ids)} pending)",
                 "progress": {
                     "current_module": module_name,
                     "module_index": idx,
@@ -509,7 +646,8 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool) -> d
         status["modules"][module_name]["started_at"] = started.isoformat().replace("+00:00", "Z")
         update_run_status(paths["status_json"], **status)
 
-        result = _run_module(module_name, paths["project"], paths["engine_logs_dir"], resolved, config_hash)
+        only_ids_path = _write_work_ids_file(paths, module_name, pending_ids) if pending_ids else None
+        result = _run_module(module_name, paths["project"], paths["engine_logs_dir"], resolved, config_hash, only_ids_path=only_ids_path)
 
         ended = datetime.now(timezone.utc)
         duration = (ended - started).total_seconds()
@@ -605,8 +743,8 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool) -> d
     return {"ok": True, "exit_code": 0, "status": status, "results": status["history"]}
 
 
-def run(project_dir: Path, config: dict) -> dict:
-    return _execute(project_dir=project_dir, cli_config=config, resume_mode=False)
+def run(project_dir: Path, config: dict, *, force: bool = False, rerun_failed_only: bool = False, from_module: int = 1) -> dict:
+    return _execute(project_dir=project_dir, cli_config=config, resume_mode=False, force=force, rerun_failed_only=rerun_failed_only, from_module=from_module)
 
 
 def validate(project_dir: Path, config: dict | None = None) -> dict:
@@ -638,7 +776,7 @@ def validate(project_dir: Path, config: dict | None = None) -> dict:
 def resume(project_dir: Path) -> dict:
     current = read_run_status((project_dir / "state" / "run_status.json").resolve())
     config = current.get("config_snapshot") or {}
-    return _execute(project_dir=project_dir, cli_config=config, resume_mode=True)
+    return _execute(project_dir=project_dir, cli_config=config, resume_mode=True, from_module=1)
 
 
 def status(project_dir: Path) -> dict:

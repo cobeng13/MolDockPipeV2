@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -109,6 +110,16 @@ def normalize_id(row_id: str|None, smiles: str) -> str:
     if rid:
         return rid
     return f"UNK_{hashlib.sha1(smiles.encode('utf-8')).hexdigest()[:10]}"
+
+
+def only_ids_from_env() -> set[str] | None:
+    p = os.environ.get("MOLDOCK_ONLY_IDS_FILE")
+    if not p:
+        return None
+    path = Path(p)
+    if not path.exists():
+        return set()
+    return {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
 
 # ------------------------------ Rules/Descriptors ----------------------------
 def compute_descriptors(smiles: str):
@@ -255,6 +266,8 @@ def main():
             safe_csv_write(FILE_MANIFEST, [], MANIFEST_FIELDS)
         return
 
+    only_ids = only_ids_from_env()
+
     # Load manifest so we can merge/update
     manifest = load_manifest(FILE_MANIFEST)
 
@@ -271,6 +284,8 @@ def main():
             # skip empty smiles rows
             continue
         lig_id = normalize_id(raw.get("id"), smiles)
+        if only_ids is not None and lig_id not in only_ids:
+            continue
 
         # Compute descriptors
         desc = compute_descriptors(smiles)

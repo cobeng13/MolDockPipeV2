@@ -378,6 +378,9 @@ def main() -> int:
     box, vcfg, receptor, chash = load_runtime_config(vina_bin, args)
 
     ligs = sorted(DIR_PREP.glob("*.pdbqt"))
+    only_ids = only_ids_from_env()
+    if only_ids is not None:
+        ligs = [lig for lig in ligs if lig.stem in only_ids]
     if not ligs:
         raise SystemExit("❌ No ligand PDBQTs found in prepared_ligands/. Run Module 3 first.")
 

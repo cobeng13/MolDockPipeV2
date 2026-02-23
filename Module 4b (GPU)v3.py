@@ -40,6 +40,16 @@ for d in (DIR_RESULTS, DIR_STATE): d.mkdir(parents=True, exist_ok=True)
 def now_iso()->str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
 
+
+def only_ids_from_env() -> set[str] | None:
+    p = os.environ.get("MOLDOCK_ONLY_IDS_FILE")
+    if not p:
+        return None
+    path = Path(p)
+    if not path.exists():
+        return set()
+    return {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
+
 def read_csv(path: Path)->list[dict]:
     if not path.exists(): return []
     with path.open("r", newline="", encoding="utf-8") as f:
@@ -292,6 +302,9 @@ def main() -> int:
     box,gcfg,receptor,chash,lig_dir,out_dir,cfg_file = load_runtime(vgpu, args)
 
     all_ligs = sorted(lig_dir.glob("*.pdbqt"))
+    only_ids = only_ids_from_env()
+    if only_ids is not None:
+        all_ligs = [lig for lig in all_ligs if lig.stem in only_ids]
     if not all_ligs: raise SystemExit("❌ No ligand PDBQTs found.")
     out_dir.mkdir(parents=True, exist_ok=True)
 

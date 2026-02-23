@@ -12,6 +12,7 @@ def run(
     receptor_path: str | None = None,
     docking_params: dict | None = None,
     config_hash: str | None = None,
+    only_ids_path: Path | None = None,
 ) -> AdapterResult:
     args: list[str] = []
     env = {}
@@ -34,5 +35,7 @@ def run(
         ])
     if config_hash:
         args.extend(["--config-hash", config_hash])
+    if only_ids_path:
+        env["MOLDOCK_ONLY_IDS_FILE"] = str(only_ids_path)
 
     return run_script("module4a_cpu", "Module 4a (CPU).py", project_dir, logs_dir, args=args, extra_env=env or None)

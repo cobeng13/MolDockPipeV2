@@ -5,5 +5,6 @@ from pathlib import Path
 from .common import AdapterResult, run_script
 
 
-def run(project_dir: Path, logs_dir: Path) -> AdapterResult:
-    return run_script("module3_meeko", "Module 3 (Parallel).py", project_dir, logs_dir)
+def run(project_dir: Path, logs_dir: Path, only_ids_path: Path | None = None) -> AdapterResult:
+    env = {"MOLDOCK_ONLY_IDS_FILE": str(only_ids_path)} if only_ids_path else None
+    return run_script("module3_meeko", "Module 3 (Parallel).py", project_dir, logs_dir, extra_env=env)

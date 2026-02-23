@@ -39,10 +39,10 @@ def test_run_overwrite_archive_and_schema(tmp_path, monkeypatch):
     _setup_project(tmp_path)
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
     monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
-    monkeypatch.setattr(engine.admet, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.build3d, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.meeko, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l, **k: _ok_result())
+    monkeypatch.setattr(engine.admet, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.build3d, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.meeko, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.docking_cpu, "run", lambda *a, **k: _ok_result())
 
     first = engine.run(tmp_path, {"docking_mode": "cpu"})
     second = engine.run(tmp_path, {"docking_mode": "cpu"})
@@ -58,10 +58,10 @@ def test_progress_and_module_timestamps(tmp_path, monkeypatch):
     _setup_project(tmp_path)
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
     monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
-    monkeypatch.setattr(engine.admet, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.build3d, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.meeko, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l, **k: _ok_result())
+    monkeypatch.setattr(engine.admet, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.build3d, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.meeko, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.docking_cpu, "run", lambda *a, **k: _ok_result())
 
     res = engine.run(tmp_path, {"docking_mode": "cpu"})
     st = res["status"]
@@ -81,10 +81,10 @@ def test_completed_with_errors_semantics(tmp_path, monkeypatch):
 
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
     monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
-    monkeypatch.setattr(engine.admet, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.build3d, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.meeko, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l, **k: _ok_result(2))
+    monkeypatch.setattr(engine.admet, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.build3d, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.meeko, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.docking_cpu, "run", lambda *a, **k: _ok_result(2))
 
     res = engine.run(tmp_path, {"docking_mode": "cpu"})
     assert res["exit_code"] == 2
@@ -111,10 +111,10 @@ def test_config_snapshot_raw_and_hash_stable(tmp_path, monkeypatch):
     _setup_project(tmp_path)
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
     monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
-    monkeypatch.setattr(engine.admet, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.build3d, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.meeko, "run", lambda p, l: _ok_result())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda p, l, **k: _ok_result())
+    monkeypatch.setattr(engine.admet, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.build3d, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.meeko, "run", lambda *a, **k: _ok_result())
+    monkeypatch.setattr(engine.docking_cpu, "run", lambda *a, **k: _ok_result())
 
     v = engine.validate(tmp_path, {"docking_mode": "cpu"})
     r = engine.run(tmp_path, {"docking_mode": "cpu"})
@@ -212,3 +212,117 @@ def test_funnel_counts_handle_missing_columns_and_casing(tmp_path):
     assert summary2["sdf_done"] == 1
     assert summary2["pdbqt_failed"] == 1
     assert summary2["vina_done"] == 1
+
+
+def test_idempotent_second_run_skips_modules(tmp_path, monkeypatch):
+    _setup_project(tmp_path)
+    monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
+    monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
+
+    counts = {"m1": 0, "m2": 0, "m3": 0, "m4": 0}
+
+    def m1(*a, **k):
+        counts["m1"] += 1
+        return _ok_result()
+
+    def m2(*a, **k):
+        counts["m2"] += 1
+        rows = [
+            {"id": "lig", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "sdf_path": str((tmp_path / "3D_Structures" / "lig.sdf").resolve())},
+            {"id": "lig2", "smiles": "CCC", "admet_status": "PASS", "sdf_status": "DONE", "sdf_path": str((tmp_path / "3D_Structures" / "lig2.sdf").resolve())},
+        ]
+        (tmp_path / "3D_Structures").mkdir(exist_ok=True)
+        for r in rows:
+            Path(r["sdf_path"]).write_text("ok", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m3(*a, **k):
+        counts["m3"] += 1
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "prepared_ligands").mkdir(exist_ok=True)
+        for r in rows:
+            p = (tmp_path / "prepared_ligands" / f"{r['id']}.pdbqt").resolve()
+            p.write_text("ATOM\nTORSDOF", encoding="utf-8")
+            r["pdbqt_status"] = "DONE"
+            r["pdbqt_path"] = str(p)
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m4(*a, **k):
+        counts["m4"] += 1
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "results").mkdir(exist_ok=True)
+        for r in rows:
+            p = (tmp_path / "results" / f"{r['id']}_out.pdbqt").resolve()
+            p.write_text("REMARK VINA RESULT: -7.0", encoding="utf-8")
+            r["vina_status"] = "DONE"
+            r["vina_pose"] = str(p)
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    monkeypatch.setattr(engine.admet, "run", m1)
+    monkeypatch.setattr(engine.build3d, "run", m2)
+    monkeypatch.setattr(engine.meeko, "run", m3)
+    monkeypatch.setattr(engine.docking_cpu, "run", m4)
+
+    res1 = engine.run(tmp_path, {"docking_mode": "cpu"})
+    assert res1["exit_code"] == 0
+    counts_before = dict(counts)
+    res2 = engine.run(tmp_path, {"docking_mode": "cpu"})
+    assert res2["exit_code"] == 0
+    assert counts == counts_before
+
+
+def test_deleted_pdbqt_triggers_module3_and_module4_only(tmp_path, monkeypatch):
+    _setup_project(tmp_path)
+    monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
+    monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
+
+    calls = []
+
+    def m1(*a, **k):
+        calls.append("m1")
+        rows = [
+            {"id": "lig", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "sdf_path": str((tmp_path / "3D_Structures" / "lig.sdf").resolve())},
+            {"id": "lig2", "smiles": "CCC", "admet_status": "PASS", "sdf_status": "DONE", "sdf_path": str((tmp_path / "3D_Structures" / "lig2.sdf").resolve())},
+        ]
+        (tmp_path / "3D_Structures").mkdir(exist_ok=True)
+        Path(rows[0]["sdf_path"]).write_text("ok", encoding="utf-8")
+        Path(rows[1]["sdf_path"]).write_text("ok", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m2(*a, **k):
+        calls.append("m2")
+        return _ok_result()
+
+    def m3(*a, **k):
+        calls.append("m3")
+        ids_file = Path(k.get("only_ids_path")) if k.get("only_ids_path") else None
+        assert ids_file and ids_file.exists()
+        ids = [x.strip() for x in ids_file.read_text(encoding="utf-8").splitlines() if x.strip()]
+        assert "lig" in ids
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "prepared_ligands").mkdir(exist_ok=True)
+        p = (tmp_path / "prepared_ligands" / "lig.pdbqt").resolve()
+        p.write_text("ATOM\nTORSDOF", encoding="utf-8")
+        rows[0]["pdbqt_status"] = "DONE"
+        rows[0]["pdbqt_path"] = str(p)
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m4(*a, **k):
+        calls.append("m4")
+        return _ok_result()
+
+    monkeypatch.setattr(engine.admet, "run", m1)
+    monkeypatch.setattr(engine.build3d, "run", m2)
+    monkeypatch.setattr(engine.meeko, "run", m3)
+    monkeypatch.setattr(engine.docking_cpu, "run", m4)
+
+    assert engine.run(tmp_path, {"docking_mode": "cpu"})["exit_code"] == 0
+    Path((tmp_path / "prepared_ligands" / "lig.pdbqt")).unlink()
+    calls.clear()
+    assert engine.run(tmp_path, {"docking_mode": "cpu"})["exit_code"] == 0
+    assert calls == ["m3", "m4"]

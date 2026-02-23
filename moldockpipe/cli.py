@@ -32,9 +32,12 @@ def _ui_enabled(no_ui: bool) -> bool:
 @click.argument("project_dir", type=click.Path(path_type=Path))
 @click.option("--docking-mode", default="cpu", type=click.Choice(["cpu", "gpu"], case_sensitive=False))
 @click.option("--no-ui", is_flag=True, default=False, help="Disable live terminal UI and print JSON only.")
-def run(project_dir: Path, docking_mode: str, no_ui: bool):
+@click.option("--force", is_flag=True, default=False, help="Rerun all rows regardless of manifest state.")
+@click.option("--rerun-failed-only", is_flag=True, default=False, help="Rerun only rows marked FAILED for each stage.")
+@click.option("--from-module", type=click.IntRange(1,4), default=1, show_default=True, help="Start planning from module N.")
+def run(project_dir: Path, docking_mode: str, no_ui: bool, force: bool, rerun_failed_only: bool, from_module: int):
     if not _ui_enabled(no_ui):
-        _emit_and_exit(engine.run(project_dir, {"docking_mode": docking_mode}))
+        _emit_and_exit(engine.run(project_dir, {"docking_mode": docking_mode}, force=force, rerun_failed_only=rerun_failed_only, from_module=from_module))
 
     cmd = [
         sys.executable,
@@ -44,12 +47,18 @@ def run(project_dir: Path, docking_mode: str, no_ui: bool):
         str(project_dir),
         "--docking-mode",
         docking_mode,
+        "--from-module",
+        str(from_module),
     ]
+    if force:
+        cmd.append("--force")
+    if rerun_failed_only:
+        cmd.append("--rerun-failed-only")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     status_path = project_dir.resolve() / "state" / "run_status.json"
 
     # Read-only watcher: engine child remains single source of state updates.
-    watch_run_status(status_path, poll_interval_s=0.35)
+    watch_run_status(status_path, poll_interval_s=1.0)
 
     stdout, stderr = proc.communicate()
     result = None
@@ -76,9 +85,12 @@ def run(project_dir: Path, docking_mode: str, no_ui: bool):
 @app.command(name="_run-engine", hidden=True)
 @click.argument("project_dir", type=click.Path(path_type=Path))
 @click.option("--docking-mode", default="cpu", type=click.Choice(["cpu", "gpu"], case_sensitive=False))
-def run_engine(project_dir: Path, docking_mode: str):
+@click.option("--force", is_flag=True, default=False)
+@click.option("--rerun-failed-only", is_flag=True, default=False)
+@click.option("--from-module", type=click.IntRange(1,4), default=1)
+def run_engine(project_dir: Path, docking_mode: str, force: bool, rerun_failed_only: bool, from_module: int):
     # Internal entrypoint used by the live UI parent process.
-    _emit_and_exit(engine.run(project_dir, {"docking_mode": docking_mode}))
+    _emit_and_exit(engine.run(project_dir, {"docking_mode": docking_mode}, force=force, rerun_failed_only=rerun_failed_only, from_module=from_module))
 
 
 @app.command()
