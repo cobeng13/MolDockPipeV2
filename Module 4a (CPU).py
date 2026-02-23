@@ -62,6 +62,16 @@ for d in (DIR_RESULTS, DIR_STATE):
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
 
+
+def only_ids_from_env() -> set[str] | None:
+    p = os.environ.get("MOLDOCK_ONLY_IDS_FILE")
+    if not p:
+        return None
+    path = Path(p)
+    if not path.exists():
+        return set()
+    return {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
+
 def read_csv(path: Path) -> list[dict]:
     if not path.exists(): return []
     with path.open("r", newline="", encoding="utf-8") as f:
@@ -378,7 +388,8 @@ def main() -> int:
     box, vcfg, receptor, chash = load_runtime_config(vina_bin, args)
 
     ligs = sorted(DIR_PREP.glob("*.pdbqt"))
-    only_ids = only_ids_from_env()
+    only_ids_fn = globals().get("only_ids_from_env")
+    only_ids = only_ids_fn() if callable(only_ids_fn) else None
     if only_ids is not None:
         ligs = [lig for lig in ligs if lig.stem in only_ids]
     if not ligs:
