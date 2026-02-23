@@ -312,23 +312,53 @@ def is_admet_pass(value) -> bool:
     return s in {"PASS", "PASSED", "OK", "TRUE", "1", "Y", "YES"}
 
 
+
+
+def is_done(value) -> bool:
+    if value is None:
+        return False
+    s = str(value).strip().upper()
+    return s in {"DONE", "OK", "SUCCESS", "PASSED"}
+
+
+def is_failed(value) -> bool:
+    if value is None:
+        return False
+    s = str(value).strip().upper()
+    return s in {"FAIL", "FAILED", "ERROR"}
+
+
 def _build_result_summary(paths: dict[str, Path]) -> dict:
     rows = read_manifest(paths["manifest_csv"])
 
-    def count(field: str, vals: set[str]) -> int:
-        return sum(1 for r in rows if (r.get(field) or "").upper() in vals)
-
     total_rows = len(rows)
-    # Accept legacy values (e.g. "PASSED") while canonical writes stay "PASS"/"FAIL".
+    # Module 2/3 failures are expected for some SMILES; report as funnel counts, not fatal by default.
     admet_pass = sum(1 for r in rows if is_admet_pass(r.get("admet_status")))
+    admet_fail = total_rows - admet_pass
+
+    sdf_done = sum(1 for r in rows if is_done(r.get("sdf_status")))
+    sdf_failed = sum(1 for r in rows if is_failed(r.get("sdf_status")))
+    pdbqt_done = sum(1 for r in rows if is_done(r.get("pdbqt_status")))
+    pdbqt_failed = sum(1 for r in rows if is_failed(r.get("pdbqt_status")))
+    vina_done = sum(1 for r in rows if is_done(r.get("vina_status")))
+    vina_failed = sum(1 for r in rows if is_failed(r.get("vina_status")))
 
     return {
         "input_rows": _read_input_count(paths["input_csv"]),
         "admet_pass": admet_pass,
-        "admet_fail": total_rows - admet_pass,
-        "ligands_prepared": count("pdbqt_status", {"PASS", "DONE", "OK", "SUCCESS"}),
-        "docked_ok": count("vina_status", {"DONE", "OK", "SUCCESS"}),
-        "docked_failed": count("vina_status", {"FAILED"}),
+        "admet_fail": admet_fail,
+        "sdf_done": sdf_done,
+        "sdf_failed": sdf_failed,
+        "pdbqt_done": pdbqt_done,
+        "pdbqt_failed": pdbqt_failed,
+        "vina_done": vina_done,
+        "vina_failed": vina_failed,
+        "dropped_after_admet": admet_pass - sdf_done,
+        "dropped_after_sdf": sdf_done - pdbqt_done,
+        "dropped_after_pdbqt": pdbqt_done - vina_done,
+        "ligands_prepared": pdbqt_done,
+        "docked_ok": vina_done,
+        "docked_failed": vina_failed,
         "leaderboard_csv": str((paths["results_dir"] / "leaderboard.csv").resolve()),
         "summary_csv": str((paths["results_dir"] / "summary.csv").resolve()),
     }

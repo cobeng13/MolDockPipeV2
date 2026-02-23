@@ -155,3 +155,60 @@ def test_admet_status_normalization_accepts_legacy_values(tmp_path):
     summary = engine._build_result_summary(engine._project_paths(tmp_path))
     assert engine.is_admet_pass("PASSED") is True
     assert summary["admet_pass"] == 1
+
+
+def test_funnel_counts_and_dropoffs(tmp_path):
+    (tmp_path / "input").mkdir(parents=True)
+    (tmp_path / "input" / "input.csv").write_text("id,smiles\n" + "".join(f"lig{i},CCO\n" for i in range(1, 52)), encoding="utf-8")
+    (tmp_path / "state").mkdir(parents=True)
+
+    rows = [
+        "id,smiles,inchikey,admet_status,admet_reason,sdf_status,sdf_path,sdf_reason,pdbqt_status,pdbqt_path,pdbqt_reason,vina_status,vina_score,vina_pose,vina_reason,config_hash,receptor_sha1,tools_rdkit,tools_meeko,tools_vina,created_at,updated_at"
+    ]
+    for i in range(1, 39):
+        pdbqt_status = "FAILED" if i in (37, 38) else "DONE"
+        vina_status = "" if pdbqt_status == "FAILED" else "DONE"
+        rows.append(
+            f"lig{i},CCO,,PASS,,DONE,,,"
+            f"{pdbqt_status},,,{vina_status},,,,,,,,,,,"
+        )
+    for i in range(39, 52):
+        rows.append(f"lig{i},CCO,,FAIL,,,,,,,,,,,,,,,,,,")
+
+    (tmp_path / "state" / "manifest.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    summary = engine._build_result_summary(engine._project_paths(tmp_path))
+
+    assert summary["admet_pass"] == 38
+    assert summary["admet_fail"] == 13
+    assert summary["pdbqt_failed"] == 2
+    assert summary["pdbqt_done"] == 36
+    assert summary["vina_done"] == 36
+    assert summary["vina_failed"] == 0
+    assert summary["dropped_after_sdf"] == summary["sdf_done"] - summary["pdbqt_done"]
+
+
+def test_funnel_counts_handle_missing_columns_and_casing(tmp_path):
+    (tmp_path / "input").mkdir(parents=True)
+    (tmp_path / "input" / "input.csv").write_text("id,smiles\nlig,CCO\n", encoding="utf-8")
+    (tmp_path / "state").mkdir(parents=True)
+
+    (tmp_path / "state" / "manifest.csv").write_text(
+        "id,smiles,admet_status\n"
+        "lig,CCO,  passed  \n",
+        encoding="utf-8",
+    )
+    summary = engine._build_result_summary(engine._project_paths(tmp_path))
+    assert summary["admet_pass"] == 1
+    assert summary["sdf_done"] == 0
+    assert summary["pdbqt_done"] == 0
+    assert summary["vina_done"] == 0
+
+    (tmp_path / "state" / "manifest.csv").write_text(
+        "id,smiles,admet_status,sdf_status,pdbqt_status,vina_status\n"
+        "lig,CCO,PASS, done , FAILED , ok \n",
+        encoding="utf-8",
+    )
+    summary2 = engine._build_result_summary(engine._project_paths(tmp_path))
+    assert summary2["sdf_done"] == 1
+    assert summary2["pdbqt_failed"] == 1
+    assert summary2["vina_done"] == 1

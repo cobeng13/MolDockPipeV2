@@ -28,3 +28,20 @@ def test_cli_validate_exit_code(monkeypatch):
 
 def test_main_callable_exists():
     assert callable(main)
+
+
+def test_cli_run_no_ui_uses_engine_result(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr("moldockpipe.engine.run", lambda p, c: {"ok": True, "exit_code": 0, "status": {"status": "completed"}})
+    result = runner.invoke(app, ["run", "./demo", "--docking-mode", "cpu", "--no-ui"])
+    assert result.exit_code == 0
+    assert '"ok": true' in result.output
+
+
+def test_cli_run_auto_disables_ui_when_not_tty(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr("moldockpipe.cli._ui_enabled", lambda no_ui: False)
+    monkeypatch.setattr("moldockpipe.engine.run", lambda p, c: {"exit_code": 3, "error": "validation"})
+    result = runner.invoke(app, ["run", "./demo", "--docking-mode", "cpu"])
+    assert result.exit_code == 3
+    assert '"error": "validation"' in result.output
