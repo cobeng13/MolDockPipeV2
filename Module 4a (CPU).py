@@ -358,7 +358,7 @@ def build_and_write_summaries_from_manifest(manifest: dict[str, dict]) -> None:
     write_csv(FILE_LEADER, leader_rows, leader_headers)
 
 # -------------- Main --------------
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Module 4a CPU docking")
     parser.add_argument("--vina", default=None, help="Explicit path to Vina CPU binary")
     parser.add_argument("--receptor", default=None, help="Explicit receptor path")
@@ -469,5 +469,7 @@ def main():
         if STOP_REQUESTED or HARD_STOP:
             print("   (Exited early by user request.)")
 
+    return 2 if failed > 0 else 0
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

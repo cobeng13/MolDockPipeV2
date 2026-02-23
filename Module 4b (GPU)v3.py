@@ -272,7 +272,7 @@ def run_batch(vgpu:Path, cfg_file:Path, lig_dir:Path, out_dir:Path, gcfg:dict)->
     return subprocess.call(cmd)
 
 # --- Main ---
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Module 4b GPU docking")
     parser.add_argument("--vina", default=None, help="Explicit path to Vina GPU binary")
     parser.add_argument("--receptor", default=None, help="Explicit receptor path")
@@ -383,5 +383,8 @@ def main():
         print(f"Summary : {FILE_SUMMARY}")
         print(f"Leaders : {FILE_LEADER}")
 
+    failed_count = sum(1 for m in manifest.values() if m.get("vina_status") == "FAILED")
+    return 2 if failed_count > 0 else 0
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
