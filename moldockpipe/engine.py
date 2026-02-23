@@ -304,15 +304,28 @@ def _read_input_count(input_csv: Path) -> int:
         return sum(1 for _ in csv.DictReader(f))
 
 
+def is_admet_pass(value) -> bool:
+    """Normalize legacy/current ADMET pass values from manifest rows."""
+    if value is None:
+        return False
+    s = str(value).strip().upper()
+    return s in {"PASS", "PASSED", "OK", "TRUE", "1", "Y", "YES"}
+
+
 def _build_result_summary(paths: dict[str, Path]) -> dict:
     rows = read_manifest(paths["manifest_csv"])
 
     def count(field: str, vals: set[str]) -> int:
         return sum(1 for r in rows if (r.get(field) or "").upper() in vals)
 
+    total_rows = len(rows)
+    # Accept legacy values (e.g. "PASSED") while canonical writes stay "PASS"/"FAIL".
+    admet_pass = sum(1 for r in rows if is_admet_pass(r.get("admet_status")))
+
     return {
         "input_rows": _read_input_count(paths["input_csv"]),
-        "admet_pass": count("admet_status", {"PASS"}),
+        "admet_pass": admet_pass,
+        "admet_fail": total_rows - admet_pass,
         "ligands_prepared": count("pdbqt_status", {"PASS", "DONE", "OK", "SUCCESS"}),
         "docked_ok": count("vina_status", {"DONE", "OK", "SUCCESS"}),
         "docked_failed": count("vina_status", {"FAILED"}),

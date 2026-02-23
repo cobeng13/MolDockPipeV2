@@ -140,3 +140,18 @@ def test_receptor_path_normalization_no_duplication(tmp_path):
 
     assert resolved == receptor_file.resolve()
     assert "projects/example_project/projects/example_project" not in resolved.as_posix()
+
+
+def test_admet_status_normalization_accepts_legacy_values(tmp_path):
+    (tmp_path / "input").mkdir(parents=True)
+    (tmp_path / "input" / "input.csv").write_text("id,smiles\nlig,CCO\n", encoding="utf-8")
+    (tmp_path / "state").mkdir(parents=True)
+    (tmp_path / "state" / "manifest.csv").write_text(
+        "id,smiles,inchikey,admet_status,admet_reason,sdf_status,sdf_path,sdf_reason,pdbqt_status,pdbqt_path,pdbqt_reason,vina_status,vina_score,vina_pose,vina_reason,config_hash,receptor_sha1,tools_rdkit,tools_meeko,tools_vina,created_at,updated_at\n"
+        "lig,CCO,,PASSED,All rules satisfied,,,,,,,,,,,,,,,,,\n",
+        encoding="utf-8",
+    )
+
+    summary = engine._build_result_summary(engine._project_paths(tmp_path))
+    assert engine.is_admet_pass("PASSED") is True
+    assert summary["admet_pass"] == 1
