@@ -1,0 +1,7 @@
+# Windows pip-oriented fallback (RDKit is preferred via conda-forge)
+click>=8.0
+pyyaml>=6.0
+pandas
+numpy
+meeko==0.6.1
+rdkit==2025.3.6
