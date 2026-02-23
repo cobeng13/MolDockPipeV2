@@ -4,8 +4,8 @@ tools:
   vina_gpu_path: tools/vina-gpu.exe
 docking:
   box:
-    center: [0.0, 0.0, 0.0]
-    size: [20.0, 20.0, 20.0]
+    center: [3.229, 6.273, -12.98]
+    size: [9, 9, 9]
   exhaustiveness: 8
   num_modes: 9
   energy_range: 3
