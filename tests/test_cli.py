@@ -5,10 +5,10 @@ from moldockpipe.cli import app, main
 
 def test_cli_status(monkeypatch):
     runner = CliRunner()
-    monkeypatch.setattr("moldockpipe.engine.status", lambda p: {"ok": True, "project_dir": str(p)})
+    monkeypatch.setattr("moldockpipe.engine.status", lambda p: {"phase": "completed", "project_dir": str(p)})
     result = runner.invoke(app, ["status", "./demo"])
     assert result.exit_code == 0
-    assert '"ok": true' in result.output
+    assert '"phase": "completed"' in result.output
 
 
 def test_cli_help_works():
@@ -18,12 +18,12 @@ def test_cli_help_works():
     assert "MolDockPipe orchestrator CLI" in result.output
 
 
-def test_cli_validate(monkeypatch):
+def test_cli_validate_exit_code(monkeypatch):
     runner = CliRunner()
-    monkeypatch.setattr("moldockpipe.engine.validate", lambda p, c: {"ok": True, "warnings": []})
+    monkeypatch.setattr("moldockpipe.engine.validate", lambda p, c: {"ok": False, "exit_code": 3, "error": "bad"})
     result = runner.invoke(app, ["validate", "./demo", "--docking-mode", "cpu"])
-    assert result.exit_code == 0
-    assert '"ok": true' in result.output
+    assert result.exit_code == 3
+    assert '"error": "bad"' in result.output
 
 
 def test_main_callable_exists():
