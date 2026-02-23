@@ -1,0 +1,3 @@
+id,smiles,notes
+aspirin,CC(=O)OC1=CC=CC=C1C(=O)O,example ligand
+caffeine,CN1C=NC2=C1N(C)C(=O)N(C)C(=O)N2C,example ligand
