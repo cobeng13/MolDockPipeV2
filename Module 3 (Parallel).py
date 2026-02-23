@@ -188,6 +188,16 @@ def save_manifest(manifest: dict[str, dict]) -> None:
 
 # ------------------------------ Discovery ------------------------------------
 
+def only_ids_from_env() -> set[str] | None:
+    p = os.environ.get("MOLDOCK_ONLY_IDS_FILE")
+    if not p:
+        return None
+    path = Path(p)
+    if not path.exists():
+        return set()
+    return {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
+
+
 def discover_sdf(manifest: dict[str, dict]) -> dict[str, Path]:
     id2sdf: dict[str, Path] = {}
     for lig_id, row in manifest.items():
@@ -316,6 +326,9 @@ def main():
 
     manifest = load_manifest()
     id2sdf = discover_sdf(manifest)
+    only_ids = only_ids_from_env()
+    if only_ids is not None:
+        id2sdf = {k: v for k, v in id2sdf.items() if k in only_ids}
     if not id2sdf:
         raise SystemExit("❌ No SDFs found. Run Module 2 first.")
 
