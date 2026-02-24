@@ -15,9 +15,11 @@ Run:  python "Module 4.py"
 """
 
 from __future__ import annotations
+import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import shlex
 import signal
@@ -59,6 +61,16 @@ for d in (DIR_RESULTS, DIR_STATE):
 # -------------- Utilities --------------
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
+
+
+def only_ids_from_env() -> set[str] | None:
+    p = os.environ.get("MOLDOCK_ONLY_IDS_FILE")
+    if not p:
+        return None
+    path = Path(p)
+    if not path.exists():
+        return set()
+    return {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
 
 def read_csv(path: Path) -> list[dict]:
     if not path.exists(): return []
@@ -105,10 +117,23 @@ def save_manifest(manifest: dict[str, dict]) -> None:
     write_csv(FILE_MANIFEST, rows, MANIFEST_FIELDS)
 
 # -------------- Config (from Vina dir) --------------
-def find_vina_binary() -> Path:
+def find_vina_binary(vina_arg: str | None = None) -> Path:
     """
-    Try common names in project root; otherwise require explicit path here if you prefer.
+    Resolve Vina path in this order:
+      1) --vina argument
+      2) MOLDOCK_VINA_CPU_PATH env var
+      3) legacy project-root discovery fallback
     """
+    provided = vina_arg or os.environ.get("MOLDOCK_VINA_CPU_PATH")
+    if provided:
+        vp = Path(provided).expanduser().resolve()
+        if not vp.exists():
+            raise SystemExit(
+                f"❌ Vina binary not found at resolved path: {vp}\n"
+                f"   Check configured tools.vina_cpu_path or place binary under platform tools/ folder."
+            )
+        return vp
+
     candidates = [
         BASE / "vina_1.2.7_win.exe",
         BASE / "vina.exe",
@@ -117,7 +142,10 @@ def find_vina_binary() -> Path:
     for c in candidates:
         if c.exists():
             return c.resolve()
-    raise SystemExit("❌ Could not find Vina binary in project root (e.g., vina_1.2.7_win.exe). Place it next to this script.")
+    raise SystemExit(
+        "❌ Could not find Vina binary via --vina, MOLDOCK_VINA_CPU_PATH, or legacy project-root candidates. "
+        "Set tools.vina_cpu_path (recommended default under <platform_root>/tools/)."
+    )
 
 def parse_vina_config(cfg_path: Path) -> Dict[str, str]:
     """
@@ -150,61 +178,78 @@ def as_int(d: Dict[str,str], k: str, default: int) -> int:
     except Exception:
         return int(default)
 
-def load_runtime_config(vina_path: Path) -> tuple[dict, dict, Path, str]:
+def load_runtime_config(vina_path: Path, args) -> tuple[dict, dict, Path, str]:
     """
     Returns: (box, vcfg, receptor_path, config_hash)
-    - box: dict with center_x/center_y/center_z/size_x/size_y/size_z
-    - vcfg: dict with exhaustiveness/num_modes/energy_range/(optional seed,cpu)
-    - receptor_path: resolved Path (fallback to ./receptors/target_prepared.pdbqt)
-    - config_hash: SHA1 of VinaConfig.txt
+    Prefer explicit CLI params (GUI/engine-driven). Optional legacy fallback reads VinaConfig.txt.
     """
+    has_explicit_box = all(
+        getattr(args, name) is not None
+        for name in ("center_x", "center_y", "center_z", "size_x", "size_y", "size_z")
+    )
+
+    if has_explicit_box:
+        box = {
+            "center_x": float(args.center_x),
+            "center_y": float(args.center_y),
+            "center_z": float(args.center_z),
+            "size_x": float(args.size_x),
+            "size_y": float(args.size_y),
+            "size_z": float(args.size_z),
+        }
+        vcfg = {
+            "exhaustiveness": int(args.exhaustiveness or 8),
+            "num_modes": int(args.num_modes or 9),
+            "energy_range": float(args.energy_range or 3),
+        }
+        rec = Path(args.receptor).resolve() if args.receptor else DIR_REC_FALLBACK.resolve()
+        if not rec.exists():
+            raise SystemExit(f"❌ Receptor not found: {rec}")
+        chash = (args.config_hash or hashlib.sha1(json.dumps({"box": box, "vcfg": vcfg}, sort_keys=True).encode("utf-8")).hexdigest()[:10])
+        print("Vina binary:", str(vina_path))
+        print("Using docking params from CLI/run.yml (no static VinaConfig.txt dependency).")
+        print("Box:", box)
+        print("Vina params:", vcfg)
+        print("Receptor:", str(rec))
+        return box, vcfg, rec, chash
+
     cfg_path = vina_path.parent / "VinaConfig.txt"
-    conf = parse_vina_config(cfg_path)
-
-    box = {
-        "center_x": as_float(conf, "center_x", 0.0),
-        "center_y": as_float(conf, "center_y", 0.0),
-        "center_z": as_float(conf, "center_z", 0.0),
-        "size_x":   as_float(conf, "size_x", 20.0),
-        "size_y":   as_float(conf, "size_y", 20.0),
-        "size_z":   as_float(conf, "size_z", 20.0),
-    }
-    vcfg = {
-        "exhaustiveness": as_int(conf, "exhaustiveness", 8),
-        "num_modes":      as_int(conf, "num_modes", 9),
-        "energy_range":   as_int(conf, "energy_range", 3),
-    }
-    seed = conf.get("seed", "").strip()
-    if seed:
-        try: vcfg["seed"] = int(seed)
-        except Exception: pass
-    cpu = conf.get("cpu", "").strip()
-    if cpu:
-        try: vcfg["cpu"] = int(cpu)
-        except Exception: pass
-
-    rec_str = conf.get("receptor", "") or conf.get("receptor_file", "")
-    if rec_str:
-        rec = Path(rec_str)
-        if not rec.is_absolute():
-            rec = (vina_path.parent / rec).resolve()
-    else:
-        rec = DIR_REC_FALLBACK.resolve()
-    if not rec.exists():
-        raise SystemExit(f"❌ Receptor not found: {rec}")
-
-    try:
+    if cfg_path.exists():
+        print("⚠️ Using legacy VinaConfig.txt; define docking parameters in run.yml for future compatibility.")
+        conf = parse_vina_config(cfg_path)
+        box = {
+            "center_x": as_float(conf, "center_x", 0.0),
+            "center_y": as_float(conf, "center_y", 0.0),
+            "center_z": as_float(conf, "center_z", 0.0),
+            "size_x": as_float(conf, "size_x", 20.0),
+            "size_y": as_float(conf, "size_y", 20.0),
+            "size_z": as_float(conf, "size_z", 20.0),
+        }
+        vcfg = {
+            "exhaustiveness": as_int(conf, "exhaustiveness", 8),
+            "num_modes": as_int(conf, "num_modes", 9),
+            "energy_range": as_int(conf, "energy_range", 3),
+        }
+        rec_str = conf.get("receptor", "") or conf.get("receptor_file", "")
+        if rec_str:
+            rec = Path(rec_str)
+            if not rec.is_absolute():
+                rec = (vina_path.parent / rec).resolve()
+        else:
+            rec = DIR_REC_FALLBACK.resolve()
+        if not rec.exists():
+            raise SystemExit(f"❌ Receptor not found: {rec}")
         chash = hashlib.sha1((cfg_path.read_text(encoding="utf-8")).encode("utf-8")).hexdigest()[:10]
-    except Exception:
-        chash = "nohash"
+        print("Vina binary:", str(vina_path))
+        print("Using legacy VinaConfig.txt:", str(cfg_path))
+        print("Box:", box)
+        print("Vina params:", vcfg)
+        print("Receptor:", str(rec))
+        return box, vcfg, rec, chash
 
-    print("Vina binary:", str(vina_path))
-    print("Using VinaConfig.txt:", str(cfg_path))
-    print("Box:", box)
-    print("Vina params:", vcfg)
-    print("Receptor:", str(rec))
-
-    return box, vcfg, rec, chash
+    raise SystemExit(
+        "❌ Docking parameters missing. Please set docking.box.center and docking.box.size in config/run.yml."
+    )
 
 # -------------- Vina helpers --------------
 VINA_RESULT_RE = re.compile(r"REMARK VINA RESULT:\s+(-?\d+\.\d+)", re.I)
@@ -323,11 +368,30 @@ def build_and_write_summaries_from_manifest(manifest: dict[str, dict]) -> None:
     write_csv(FILE_LEADER, leader_rows, leader_headers)
 
 # -------------- Main --------------
-def main():
-    vina_bin = find_vina_binary()
-    box, vcfg, receptor, chash = load_runtime_config(vina_bin)
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Module 4a CPU docking")
+    parser.add_argument("--vina", default=None, help="Explicit path to Vina CPU binary")
+    parser.add_argument("--receptor", default=None, help="Explicit receptor path")
+    parser.add_argument("--center_x", type=float, default=None)
+    parser.add_argument("--center_y", type=float, default=None)
+    parser.add_argument("--center_z", type=float, default=None)
+    parser.add_argument("--size_x", type=float, default=None)
+    parser.add_argument("--size_y", type=float, default=None)
+    parser.add_argument("--size_z", type=float, default=None)
+    parser.add_argument("--exhaustiveness", type=int, default=None)
+    parser.add_argument("--num_modes", type=int, default=None)
+    parser.add_argument("--energy_range", type=float, default=None)
+    parser.add_argument("--config-hash", default=None)
+    args = parser.parse_args()
+
+    vina_bin = find_vina_binary(args.vina)
+    box, vcfg, receptor, chash = load_runtime_config(vina_bin, args)
 
     ligs = sorted(DIR_PREP.glob("*.pdbqt"))
+    only_ids_fn = globals().get("only_ids_from_env")
+    only_ids = only_ids_fn() if callable(only_ids_fn) else None
+    if only_ids is not None:
+        ligs = [lig for lig in ligs if lig.stem in only_ids]
     if not ligs:
         raise SystemExit("❌ No ligand PDBQTs found in prepared_ligands/. Run Module 3 first.")
 
@@ -419,5 +483,7 @@ def main():
         if STOP_REQUESTED or HARD_STOP:
             print("   (Exited early by user request.)")
 
+    return 2 if failed > 0 else 0
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

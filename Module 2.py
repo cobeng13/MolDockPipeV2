@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -88,6 +89,16 @@ def read_lines(path: Path) -> list[str]:
     if not path.exists():
         return []
     return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def only_ids_from_env() -> set[str] | None:
+    p = os.environ.get("MOLDOCK_ONLY_IDS_FILE")
+    if not p:
+        return None
+    path = Path(p)
+    if not path.exists():
+        return set()
+    return {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
 
 def normalize_id(row_id: str|None, smiles: str) -> str:
     rid = (row_id or "").strip()
@@ -279,6 +290,10 @@ def main():
     ids = read_lines(FILE_PASS)
     if not ids:
         ids = list(id2smiles.keys())
+
+    only_ids = only_ids_from_env()
+    if only_ids is not None:
+        ids = [i for i in ids if i in only_ids]
 
     # Manifest
     manifest: dict[str, dict] = load_manifest()
