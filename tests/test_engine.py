@@ -35,14 +35,64 @@ def _ok_result(rc=0):
     return R()
 
 
+
+
+def _prime_manifest_all_stages(tmp_path):
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"id": "lig", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE"},
+        {"id": "lig2", "smiles": "CCC", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE"},
+    ]
+    (tmp_path / "3D_Structures").mkdir(exist_ok=True)
+    (tmp_path / "prepared_ligands").mkdir(exist_ok=True)
+    (tmp_path / "results").mkdir(exist_ok=True)
+    for rid in ("lig", "lig2"):
+        (tmp_path / "3D_Structures" / f"{rid}.sdf").write_text("x", encoding="utf-8")
+        (tmp_path / "prepared_ligands" / f"{rid}.pdbqt").write_text("x", encoding="utf-8")
+        (tmp_path / "results" / f"{rid}_out.pdbqt").write_text("x", encoding="utf-8")
+    engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
 def test_run_overwrite_archive_and_schema(tmp_path, monkeypatch):
     _setup_project(tmp_path)
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
     monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
-    monkeypatch.setattr(engine.admet, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.build3d, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.meeko, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda *a, **k: _ok_result())
+    def m1(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        for r in rows:
+            r["admet_status"] = "PASS"
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m2(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "3D_Structures").mkdir(exist_ok=True)
+        for r in rows:
+            r["sdf_status"] = "DONE"
+            (tmp_path / "3D_Structures" / f"{r['id']}.sdf").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m3(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "prepared_ligands").mkdir(exist_ok=True)
+        for r in rows:
+            r["pdbqt_status"] = "DONE"
+            (tmp_path / "prepared_ligands" / f"{r['id']}.pdbqt").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m4(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "results").mkdir(exist_ok=True)
+        for r in rows:
+            r["vina_status"] = "DONE"
+            (tmp_path / "results" / f"{r['id']}_out.pdbqt").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    monkeypatch.setattr(engine.admet, "run", m1)
+    monkeypatch.setattr(engine.build3d, "run", m2)
+    monkeypatch.setattr(engine.meeko, "run", m3)
+    monkeypatch.setattr(engine.docking_cpu, "run", m4)
 
     first = engine.run(tmp_path, {"docking_mode": "cpu"})
     second = engine.run(tmp_path, {"docking_mode": "cpu"})
@@ -56,12 +106,48 @@ def test_run_overwrite_archive_and_schema(tmp_path, monkeypatch):
 
 def test_progress_and_module_timestamps(tmp_path, monkeypatch):
     _setup_project(tmp_path)
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+    engine.write_manifest((tmp_path / "state" / "manifest.csv"), [{"id": "lig", "smiles": "CCO", "admet_status": ""}, {"id": "lig2", "smiles": "CCC", "admet_status": ""}])
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
     monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
-    monkeypatch.setattr(engine.admet, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.build3d, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.meeko, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda *a, **k: _ok_result())
+    def m1(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        for r in rows:
+            r["admet_status"] = "PASS"
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m2(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "3D_Structures").mkdir(exist_ok=True)
+        for r in rows:
+            r["sdf_status"] = "DONE"
+            (tmp_path / "3D_Structures" / f"{r['id']}.sdf").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m3(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "prepared_ligands").mkdir(exist_ok=True)
+        for r in rows:
+            r["pdbqt_status"] = "DONE"
+            (tmp_path / "prepared_ligands" / f"{r['id']}.pdbqt").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m4(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "results").mkdir(exist_ok=True)
+        for r in rows:
+            r["vina_status"] = "DONE"
+            (tmp_path / "results" / f"{r['id']}_out.pdbqt").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    monkeypatch.setattr(engine.admet, "run", m1)
+    monkeypatch.setattr(engine.build3d, "run", m2)
+    monkeypatch.setattr(engine.meeko, "run", m3)
+    monkeypatch.setattr(engine.docking_cpu, "run", m4)
 
     res = engine.run(tmp_path, {"docking_mode": "cpu"})
     st = res["status"]
@@ -75,7 +161,7 @@ def test_completed_with_errors_semantics(tmp_path, monkeypatch):
     (tmp_path / "state").mkdir(parents=True, exist_ok=True)
     (tmp_path / "state" / "manifest.csv").write_text(
         "id,smiles,inchikey,admet_status,admet_reason,sdf_status,sdf_path,sdf_reason,pdbqt_status,pdbqt_path,pdbqt_reason,vina_status,vina_score,vina_pose,vina_reason,config_hash,receptor_sha1,tools_rdkit,tools_meeko,tools_vina,created_at,updated_at\n"
-        "lig,CCO,,PASS,,PASS,,,PASS,,,FAILED,,,No pose,,,,,,,\n",
+        "lig,CCO,,PASS,,DONE,,,DONE,,,FAILED,,,No pose,,,,,,,\n",
         encoding="utf-8",
     )
 
@@ -111,10 +197,44 @@ def test_config_snapshot_raw_and_hash_stable(tmp_path, monkeypatch):
     _setup_project(tmp_path)
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
     monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
-    monkeypatch.setattr(engine.admet, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.build3d, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.meeko, "run", lambda *a, **k: _ok_result())
-    monkeypatch.setattr(engine.docking_cpu, "run", lambda *a, **k: _ok_result())
+    def m1(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        for r in rows:
+            r["admet_status"] = "PASS"
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m2(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "3D_Structures").mkdir(exist_ok=True)
+        for r in rows:
+            r["sdf_status"] = "DONE"
+            (tmp_path / "3D_Structures" / f"{r['id']}.sdf").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m3(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "prepared_ligands").mkdir(exist_ok=True)
+        for r in rows:
+            r["pdbqt_status"] = "DONE"
+            (tmp_path / "prepared_ligands" / f"{r['id']}.pdbqt").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    def m4(*a, **k):
+        rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
+        (tmp_path / "results").mkdir(exist_ok=True)
+        for r in rows:
+            r["vina_status"] = "DONE"
+            (tmp_path / "results" / f"{r['id']}_out.pdbqt").write_text("x", encoding="utf-8")
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
+        return _ok_result()
+
+    monkeypatch.setattr(engine.admet, "run", m1)
+    monkeypatch.setattr(engine.build3d, "run", m2)
+    monkeypatch.setattr(engine.meeko, "run", m3)
+    monkeypatch.setattr(engine.docking_cpu, "run", m4)
 
     v = engine.validate(tmp_path, {"docking_mode": "cpu"})
     r = engine.run(tmp_path, {"docking_mode": "cpu"})
@@ -223,6 +343,11 @@ def test_idempotent_second_run_skips_modules(tmp_path, monkeypatch):
 
     def m1(*a, **k):
         counts["m1"] += 1
+        rows = [
+            {"id": "lig", "smiles": "CCO", "admet_status": "PASS"},
+            {"id": "lig2", "smiles": "CCC", "admet_status": "PASS"},
+        ]
+        engine.write_manifest((tmp_path / "state" / "manifest.csv"), rows)
         return _ok_result()
 
     def m2(*a, **k):
@@ -299,9 +424,7 @@ def test_deleted_pdbqt_triggers_module3_and_module4_only(tmp_path, monkeypatch):
 
     def m3(*a, **k):
         calls.append("m3")
-        ids_file = Path(k.get("only_ids_path")) if k.get("only_ids_path") else None
-        assert ids_file and ids_file.exists()
-        ids = [x.strip() for x in ids_file.read_text(encoding="utf-8").splitlines() if x.strip()]
+        ids = sorted(k.get("only_ids") or [])
         assert "lig" in ids
         rows = engine.read_manifest((tmp_path / "state" / "manifest.csv"))
         (tmp_path / "prepared_ligands").mkdir(exist_ok=True)

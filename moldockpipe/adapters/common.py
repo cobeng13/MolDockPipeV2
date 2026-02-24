@@ -68,3 +68,12 @@ def run_script(
         stdout_log=str(stdout_log),
         stderr_log=str(stderr_log),
     )
+
+
+def only_ids_env(project_dir: Path, module: str, only_ids: set[str] | None) -> dict[str, str] | None:
+    if not only_ids:
+        return None
+    work = (project_dir / "state" / f"work_ids_{module}.txt").resolve()
+    work.parent.mkdir(parents=True, exist_ok=True)
+    work.write_text("\n".join(sorted(only_ids)) + "\n", encoding="utf-8")
+    return {"MOLDOCK_ONLY_IDS_FILE": str(work)}
