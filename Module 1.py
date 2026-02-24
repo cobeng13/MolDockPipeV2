@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -110,6 +111,16 @@ def normalize_id(row_id: str|None, smiles: str) -> str:
         return rid
     return f"UNK_{hashlib.sha1(smiles.encode('utf-8')).hexdigest()[:10]}"
 
+
+def only_ids_from_env() -> set[str] | None:
+    p = os.environ.get("MOLDOCK_ONLY_IDS_FILE")
+    if not p:
+        return None
+    path = Path(p)
+    if not path.exists():
+        return set()
+    return {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
+
 # ------------------------------ Rules/Descriptors ----------------------------
 def compute_descriptors(smiles: str):
     """Return dict of descriptors or None if RDKit unavailable/invalid."""
@@ -136,6 +147,9 @@ def compute_descriptors(smiles: str):
         "inchikey": inchikey
     }
 
+ADMET_PASS = "PASS"
+ADMET_FAIL = "FAIL"
+
 def apply_rules(desc: dict, rules_cfg: dict) -> tuple[str, str, dict]:
     """
     Returns (decision, reason, flags)
@@ -150,7 +164,7 @@ def apply_rules(desc: dict, rules_cfg: dict) -> tuple[str, str, dict]:
     if desc is None:
         return "SKIPPED", "RDKit not available", flags
     if desc == "INVALID":
-        return "FAIL", "Invalid SMILES", flags
+        return ADMET_FAIL, "Invalid SMILES", flags
 
     mw, clogp, tpsa = desc["mw"], desc["alogp"], desc["tpsa"]
     hbd, hba, rotb = desc["hbd"], desc["hba"], desc["rotb"]
@@ -182,18 +196,18 @@ def apply_rules(desc: dict, rules_cfg: dict) -> tuple[str, str, dict]:
         violations.append("Ghose")
 
     if not violations:
-        return "PASS", "All rules satisfied", flags
+        return ADMET_PASS, "All rules satisfied", flags
 
     # If there are violations
     if hard_fail:
-        return "FAIL", "; ".join(v + " violated" for v in violations), flags
+        return ADMET_FAIL, "; ".join(v + " violated" for v in violations), flags
 
     # Default: only Lipinski/Veber violations cause FAIL, others warn but pass
     must_fail = any(v in ("Lipinski", "Veber") for v in violations)
     if must_fail:
-        return "FAIL", "; ".join(v + " violated" for v in violations), flags
+        return ADMET_FAIL, "; ".join(v + " violated" for v in violations), flags
     else:
-        return "PASS", "; ".join(v + " violated (allowed)" for v in violations), flags
+        return ADMET_PASS, "; ".join(v + " violated (allowed)" for v in violations), flags
 
 # ------------------------------ Manifest -------------------------------------
 MANIFEST_FIELDS = [
@@ -252,6 +266,8 @@ def main():
             safe_csv_write(FILE_MANIFEST, [], MANIFEST_FIELDS)
         return
 
+    only_ids = only_ids_from_env()
+
     # Load manifest so we can merge/update
     manifest = load_manifest(FILE_MANIFEST)
 
@@ -268,6 +284,8 @@ def main():
             # skip empty smiles rows
             continue
         lig_id = normalize_id(raw.get("id"), smiles)
+        if only_ids is not None and lig_id not in only_ids:
+            continue
 
         # Compute descriptors
         desc = compute_descriptors(smiles)
@@ -298,9 +316,9 @@ def main():
         admet_rows.append(admet_row)
 
         # Side lists
-        if decision == "FAIL":
+        if decision == ADMET_FAIL:
             fail_ids.append(lig_id)
-        elif decision in ("PASS", "SKIPPED"):
+        elif decision in (ADMET_PASS, "SKIPPED"):
             pass_ids.append(lig_id)
 
         # Merge into manifest
@@ -310,13 +328,11 @@ def main():
         m["smiles"] = smiles
         if admet_row["inchikey"]:
             m["inchikey"] = admet_row["inchikey"]
-        # ADMET status
-        status_map = {
-            "PASS": "PASSED",
-            "FAIL": "FAILED",
-            "SKIPPED": "SKIPPED_ADMET"
-        }
-        m["admet_status"] = status_map.get(admet_row["admet_decision"], "PENDING")
+        # Canonical manifest values: keep status strict PASS/FAIL and reasons separate.
+        if decision == ADMET_PASS:
+            m["admet_status"] = ADMET_PASS
+        else:
+            m["admet_status"] = ADMET_FAIL
         m["admet_reason"] = reason
 
         # Touch timestamps/config
