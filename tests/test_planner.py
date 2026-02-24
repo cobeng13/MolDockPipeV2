@@ -26,8 +26,8 @@ def test_planner_second_run_all_skipped(tmp_path):
     write_manifest(
         tmp_path / "state" / "manifest.csv",
         [
-            {"id": "lig1", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCO","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}),"vina","",{},"cfg")},
-            {"id": "lig2", "smiles": "CCC", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCC","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}),"vina","",{},"cfg")},
+            {"id": "lig1", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCO","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}),"","",{},"cfg")},
+            {"id": "lig2", "smiles": "CCC", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCC","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}),"","",{},"cfg")},
         ],
     )
 
@@ -48,8 +48,8 @@ def test_planner_deleted_pdbqt_only_hits_module3_and4(tmp_path):
     write_manifest(
         tmp_path / "state" / "manifest.csv",
         [
-            {"id": "lig1", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCO","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}),"vina","",{},"cfg")},
-            {"id": "lig2", "smiles": "CCC", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCC","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}),"vina","",{},"cfg")},
+            {"id": "lig1", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCO","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCO","r",{}),"m",{}),"","",{},"cfg")},
+            {"id": "lig2", "smiles": "CCC", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE", "sdf_fp": sdf_fp("CCC","r",{}), "pdbqt_fp": pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}), "vina_fp": vina_fp(pdbqt_fp(sdf_fp("CCC","r",{}),"m",{}),"","",{},"cfg")},
         ],
     )
 

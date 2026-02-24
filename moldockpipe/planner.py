@@ -17,6 +17,7 @@ class WorkPlan:
     module4_ids: set[str]
     stats: dict
     reasons: dict[str, dict[str, set[str]]]
+    backfill_updates: dict[str, dict[str, str]]
 
 
 def is_admet_pass(value) -> bool:
@@ -46,6 +47,10 @@ def _exists_nonempty(path: Path) -> bool:
         return False
 
 
+def _missing(v) -> bool:
+    return str(v or "").strip().lower() in {"", "nan", "none"}
+
+
 def compute_work_plan(project_dir: Path, *, resolved: dict, versions: dict, config_hash: str, docking_params: dict) -> WorkPlan:
     project_dir = project_dir.resolve()
     rows = read_manifest(project_dir / "state" / "manifest.csv")
@@ -54,7 +59,10 @@ def compute_work_plan(project_dir: Path, *, resolved: dict, versions: dict, conf
 
     rdkit_ver = str(versions.get("rdkit") or "")
     meeko_ver = str(versions.get("meeko") or "")
-    vina_ver = str(resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path") or "")
+    vina_exe_sha = ""
+    vexe = resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path")
+    if vexe and Path(vexe).exists():
+        vina_exe_sha = sha1_file(Path(vexe))
     receptor_sha1 = ""
     rp = resolved.get("receptor_path")
     if rp and Path(rp).exists():
@@ -62,10 +70,11 @@ def compute_work_plan(project_dir: Path, *, resolved: dict, versions: dict, conf
 
     todo = {"module1": set(), "module2": set(), "module3": set(), "module4": set()}
     reasons = {
-        "module2": {"status_not_done": set(), "missing": set(), "failed": set(), "stale": set()},
-        "module3": {"status_not_done": set(), "missing": set(), "failed": set(), "stale": set()},
-        "module4": {"status_not_done": set(), "missing": set(), "failed": set(), "stale": set()},
+        "module2": {"status_not_done": set(), "missing_file": set(), "failed": set(), "fp_mismatch_stale": set(), "fp_missing_backfilled": set()},
+        "module3": {"status_not_done": set(), "missing_file": set(), "failed": set(), "fp_mismatch_stale": set(), "fp_missing_backfilled": set()},
+        "module4": {"status_not_done": set(), "missing_file": set(), "failed": set(), "fp_mismatch_stale": set(), "fp_missing_backfilled": set()},
     }
+    backfill_updates: dict[str, dict[str, str]] = {}
 
     for lig_id, input_row in sorted(inputs.items()):
         row = by_id.get(lig_id, {})
@@ -77,57 +86,74 @@ def compute_work_plan(project_dir: Path, *, resolved: dict, versions: dict, conf
         smiles = str(input_row.get("smiles") or "")
         cur_sdf_fp = sdf_fp(smiles, rdkit_ver, params={})
         cur_pdbqt_fp = pdbqt_fp(cur_sdf_fp, meeko_ver, params={})
-        cur_vina_fp = vina_fp(cur_pdbqt_fp, vina_ver, receptor_sha1, docking_params, config_hash)
+        cur_vina_fp = vina_fp(cur_pdbqt_fp, vina_exe_sha, receptor_sha1, docking_params, config_hash)
 
-        # Module 1 gating
         if admet not in {"PASS", "FAIL"}:
             todo["module1"].add(lig_id)
 
-        # Module 2
-        if is_admet_pass(admet):
-            s2 = False
-            if sdf_status == "FAILED":
-                reasons["module2"]["failed"].add(lig_id); s2 = True
-            elif sdf_status != "DONE":
-                reasons["module2"]["status_not_done"].add(lig_id); s2 = True
-            elif not _exists_nonempty(sdf_path(project_dir, lig_id)):
-                reasons["module2"]["missing"].add(lig_id); s2 = True
-            elif str(row.get("sdf_fp") or "") != cur_sdf_fp:
-                reasons["module2"]["stale"].add(lig_id); s2 = True
-            if s2:
-                todo["module2"].add(lig_id)
+        if not is_admet_pass(admet):
+            continue
 
-            # Module 3 (cascade from module2 invalidation)
-            s3 = s2
-            if not s3:
-                if pdbqt_status == "FAILED":
-                    reasons["module3"]["failed"].add(lig_id); s3 = True
-                elif pdbqt_status != "DONE":
-                    reasons["module3"]["status_not_done"].add(lig_id); s3 = True
-                elif not _exists_nonempty(pdbqt_path(project_dir, lig_id)):
-                    reasons["module3"]["missing"].add(lig_id); s3 = True
-                elif str(row.get("pdbqt_fp") or "") != cur_pdbqt_fp:
-                    reasons["module3"]["stale"].add(lig_id); s3 = True
-            else:
-                reasons["module3"]["stale"].add(lig_id)
-            if s3:
-                todo["module3"].add(lig_id)
+        # module2
+        s2 = False
+        if sdf_status == "FAILED":
+            reasons["module2"]["failed"].add(lig_id); s2 = True
+        elif sdf_status != "DONE":
+            reasons["module2"]["status_not_done"].add(lig_id); s2 = True
+        elif not _exists_nonempty(sdf_path(project_dir, lig_id)):
+            reasons["module2"]["missing_file"].add(lig_id); s2 = True
+        else:
+            stored = row.get("sdf_fp")
+            if _missing(stored):
+                reasons["module2"]["fp_missing_backfilled"].add(lig_id)
+                backfill_updates.setdefault(lig_id, {}).update({"sdf_fp": cur_sdf_fp, "sdf_rdkit_ver": rdkit_ver})
+            elif str(stored) != cur_sdf_fp:
+                reasons["module2"]["fp_mismatch_stale"].add(lig_id); s2 = True
+        if s2:
+            todo["module2"].add(lig_id)
 
-            # Module 4 (cascade from 2/3)
-            s4 = s2 or s3
-            if not s4:
-                if vina_status == "FAILED":
-                    reasons["module4"]["failed"].add(lig_id); s4 = True
-                elif vina_status != "DONE":
-                    reasons["module4"]["status_not_done"].add(lig_id); s4 = True
-                elif not _exists_nonempty(vina_out_path(project_dir, lig_id)):
-                    reasons["module4"]["missing"].add(lig_id); s4 = True
-                elif str(row.get("vina_fp") or "") != cur_vina_fp:
-                    reasons["module4"]["stale"].add(lig_id); s4 = True
+        # module3
+        s3 = s2
+        if not s3:
+            if pdbqt_status == "FAILED":
+                reasons["module3"]["failed"].add(lig_id); s3 = True
+            elif pdbqt_status != "DONE":
+                reasons["module3"]["status_not_done"].add(lig_id); s3 = True
+            elif not _exists_nonempty(pdbqt_path(project_dir, lig_id)):
+                reasons["module3"]["missing_file"].add(lig_id); s3 = True
             else:
-                reasons["module4"]["stale"].add(lig_id)
-            if s4:
-                todo["module4"].add(lig_id)
+                stored = row.get("pdbqt_fp")
+                if _missing(stored):
+                    reasons["module3"]["fp_missing_backfilled"].add(lig_id)
+                    backfill_updates.setdefault(lig_id, {}).update({"pdbqt_fp": cur_pdbqt_fp, "pdbqt_meeko_ver": meeko_ver})
+                elif str(stored) != cur_pdbqt_fp:
+                    reasons["module3"]["fp_mismatch_stale"].add(lig_id); s3 = True
+        if s3:
+            todo["module3"].add(lig_id)
+
+        # module4
+        s4 = s2 or s3
+        if not s4:
+            if vina_status == "FAILED":
+                reasons["module4"]["failed"].add(lig_id); s4 = True
+            elif vina_status != "DONE":
+                reasons["module4"]["status_not_done"].add(lig_id); s4 = True
+            elif not _exists_nonempty(vina_out_path(project_dir, lig_id)):
+                reasons["module4"]["missing_file"].add(lig_id); s4 = True
+            else:
+                stored = row.get("vina_fp")
+                if _missing(stored):
+                    reasons["module4"]["fp_missing_backfilled"].add(lig_id)
+                    backfill_updates.setdefault(lig_id, {}).update({
+                        "vina_fp": cur_vina_fp,
+                        "vina_exe_sha1": vina_exe_sha,
+                        "vina_receptor_sha1": receptor_sha1,
+                        "vina_config_hash": config_hash,
+                    })
+                elif str(stored) != cur_vina_fp:
+                    reasons["module4"]["fp_mismatch_stale"].add(lig_id); s4 = True
+        if s4:
+            todo["module4"].add(lig_id)
 
     stats = {
         "input_ids": len(inputs),
@@ -135,12 +161,13 @@ def compute_work_plan(project_dir: Path, *, resolved: dict, versions: dict, conf
         "module2_todo": len(todo["module2"]),
         "module3_todo": len(todo["module3"]),
         "module4_todo": len(todo["module4"]),
-        "reasons": {
-            mod: {k: len(v) for k, v in detail.items()} for mod, detail in reasons.items()
+        "reasons": {mod: {k: len(v) for k, v in detail.items()} for mod, detail in reasons.items()},
+        "backfill_counts": {
+            "module2": len(reasons["module2"]["fp_missing_backfilled"]),
+            "module3": len(reasons["module3"]["fp_missing_backfilled"]),
+            "module4": len(reasons["module4"]["fp_missing_backfilled"]),
         },
-        "samples": {
-            mod: sorted(list(ids))[:10] for mod, ids in todo.items()
-        },
+        "samples": {mod: sorted(list(ids))[:10] for mod, ids in todo.items()},
     }
 
     return WorkPlan(
@@ -150,4 +177,5 @@ def compute_work_plan(project_dir: Path, *, resolved: dict, versions: dict, conf
         module4_ids=todo["module4"],
         stats=stats,
         reasons=reasons,
+        backfill_updates=backfill_updates,
     )

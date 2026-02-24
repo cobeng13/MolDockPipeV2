@@ -25,6 +25,7 @@ MANIFEST_FIELDS = [
     "pdbqt_meeko_ver",
     "vina_fp",
     "vina_ver",
+    "vina_exe_sha1",
     "vina_receptor_sha1",
     "vina_config_hash",
     "config_hash",
@@ -42,7 +43,16 @@ def read_manifest(path: Path) -> list[dict]:
         return []
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        return [dict(row) for row in reader]
+        rows=[]
+        for row in reader:
+            cleaned={}
+            for k,v in dict(row).items():
+                sv="" if v is None else str(v)
+                cleaned[k]="" if sv.strip().lower() in {"nan","none"} else sv
+            for f in MANIFEST_FIELDS:
+                cleaned.setdefault(f, "")
+            rows.append(cleaned)
+        return rows
 
 
 def write_manifest(path: Path, rows: list[dict]) -> None:

@@ -459,7 +459,11 @@ def _stamp_stage_fingerprints(paths: dict[str, Path], resolved: dict, versions: 
         receptor_sha = sha1_file(Path(rp))
     rdkit_ver = str(versions.get("rdkit") or "")
     meeko_ver = str(versions.get("meeko") or "")
-    vina_ver = str(resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path") or "")
+    vina_ver = ""
+    vina_exe_sha1 = ""
+    vexe = resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path")
+    if vexe and Path(vexe).exists():
+        vina_exe_sha1 = sha1_file(Path(vexe))
     docking = {
         "box": resolved.get("box") or {},
         "params": resolved.get("docking_params") or {},
@@ -475,7 +479,7 @@ def _stamp_stage_fingerprints(paths: dict[str, Path], resolved: dict, versions: 
         smi = input_smiles.get(rid, str(r.get("smiles") or ""))
         sfp = make_sdf_fp(smi, rdkit_ver, params={})
         pfp = make_pdbqt_fp(sfp, meeko_ver, params={})
-        vfp = make_vina_fp(pfp, vina_ver, receptor_sha, docking, config_hash)
+        vfp = make_vina_fp(pfp, vina_exe_sha1, receptor_sha, docking, config_hash)
 
         if module_name == "module2_build3d" and str(r.get("sdf_status") or "").upper() == "DONE":
             r["sdf_fp"] = sfp
@@ -488,11 +492,30 @@ def _stamp_stage_fingerprints(paths: dict[str, Path], resolved: dict, versions: 
         if module_name == "module4_docking" and str(r.get("vina_status") or "").upper() == "DONE":
             r["vina_fp"] = vfp
             r["vina_ver"] = vina_ver
+            r["vina_exe_sha1"] = vina_exe_sha1
             r["vina_receptor_sha1"] = receptor_sha
             r["vina_config_hash"] = config_hash
             touched = True
 
     if touched:
+        write_manifest(paths["manifest_csv"], rows)
+
+
+
+
+def _apply_backfill_updates(paths: dict[str, Path], updates: dict[str, dict[str, str]]) -> None:
+    if not updates:
+        return
+    rows = read_manifest(paths["manifest_csv"])
+    changed = False
+    for r in rows:
+        rid = str((r.get("id") or "")).strip()
+        if rid in updates:
+            for k, v in updates[rid].items():
+                if str(r.get(k) or "") != str(v):
+                    r[k] = v
+                    changed = True
+    if changed:
         write_manifest(paths["manifest_csv"], rows)
 
 
@@ -572,6 +595,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
         else:
             plan = compute_work_plan(paths["project"], resolved=resolved, versions=versions, config_hash=config_hash, docking_params={"box": resolved.get("box") or {}, "params": resolved.get("docking_params") or {}})
             status["work_plan_summary"] = plan.stats
+            _apply_backfill_updates(paths, plan.backfill_updates)
             pending_ids = {
                 "module1_admet": plan.module1_ids,
                 "module2_build3d": plan.module2_ids,

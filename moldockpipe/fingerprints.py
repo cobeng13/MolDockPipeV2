@@ -5,8 +5,18 @@ import json
 from pathlib import Path
 
 
+def _normalize(obj):
+    if isinstance(obj, float):
+        return round(obj, 6)
+    if isinstance(obj, dict):
+        return {str(k): _normalize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_normalize(v) for v in obj]
+    return obj
+
+
 def stable_hash(obj: dict) -> str:
-    payload = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    payload = json.dumps(_normalize(obj), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -28,7 +38,7 @@ def pdbqt_fp(upstream_sdf_fp: str, meeko_ver: str, params: dict | None = None) -
 
 def vina_fp(
     upstream_pdbqt_fp: str,
-    vina_ver: str,
+    vina_exe_sha1: str,
     receptor_sha1: str,
     docking: dict,
     config_hash: str,
@@ -36,7 +46,7 @@ def vina_fp(
     return stable_hash(
         {
             "stage": "vina",
-            "vina": vina_ver or "",
+            "vina_exe_sha1": vina_exe_sha1 or "",
             "receptor_sha1": receptor_sha1 or "",
             "upstream_pdbqt_fp": upstream_pdbqt_fp or "",
             "docking": docking or {},
