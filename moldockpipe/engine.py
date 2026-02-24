@@ -459,7 +459,6 @@ def _stamp_stage_fingerprints(paths: dict[str, Path], resolved: dict, versions: 
         receptor_sha = sha1_file(Path(rp))
     rdkit_ver = str(versions.get("rdkit") or "")
     meeko_ver = str(versions.get("meeko") or "")
-    vina_ver = ""
     vina_exe_sha1 = ""
     vexe = resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path")
     if vexe and Path(vexe).exists():
@@ -491,7 +490,6 @@ def _stamp_stage_fingerprints(paths: dict[str, Path], resolved: dict, versions: 
             touched = True
         if module_name == "module4_docking" and str(r.get("vina_status") or "").upper() == "DONE":
             r["vina_fp"] = vfp
-            r["vina_ver"] = vina_ver
             r["vina_exe_sha1"] = vina_exe_sha1
             r["vina_receptor_sha1"] = receptor_sha
             r["vina_config_hash"] = config_hash

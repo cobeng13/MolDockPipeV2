@@ -24,7 +24,6 @@ MANIFEST_FIELDS = [
     "pdbqt_fp",
     "pdbqt_meeko_ver",
     "vina_fp",
-    "vina_ver",
     "vina_exe_sha1",
     "vina_receptor_sha1",
     "vina_config_hash",

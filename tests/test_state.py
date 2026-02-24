@@ -17,3 +17,20 @@ def test_run_status_defaults_and_update(tmp_path):
     assert default["phase"] == "not_started"
     updated = update_run_status(path, phase="running")
     assert updated["phase"] == "running"
+
+
+def test_manifest_legacy_vina_ver_column_tolerated(tmp_path):
+    path = tmp_path / "state" / "manifest.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "id,smiles,vina_status,vina_ver\n"
+        "lig1,CCO,DONE,1.2.7\n",
+        encoding="utf-8",
+    )
+    loaded = read_manifest(path)
+    assert loaded[0]["id"] == "lig1"
+    assert loaded[0].get("vina_ver") == "1.2.7"
+
+    write_manifest(path, loaded)
+    header = path.read_text(encoding="utf-8").splitlines()[0]
+    assert "vina_ver" not in header
