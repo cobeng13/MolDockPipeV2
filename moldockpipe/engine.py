@@ -14,6 +14,8 @@ from pathlib import Path
 
 from moldockpipe.adapters import admet, build3d, docking_cpu, docking_gpu, meeko
 from moldockpipe.adapters.common import REPO_ROOT
+from moldockpipe.artifacts import pdbqt_path, sdf_path, vina_out_path
+from moldockpipe.fingerprints import pdbqt_fp as make_pdbqt_fp, sdf_fp as make_sdf_fp, sha1_file, vina_fp as make_vina_fp
 from moldockpipe.state import read_manifest, read_run_status, update_run_status, write_json_atomic, write_manifest
 from moldockpipe.planner import compute_work_plan
 
@@ -438,6 +440,62 @@ def _stamp_manifest_config_hash(paths: dict[str, Path], config_hash: str) -> Non
         write_manifest(paths["manifest_csv"], rows)
 
 
+def _stamp_stage_fingerprints(paths: dict[str, Path], resolved: dict, versions: dict, config_hash: str, module_name: str, only_ids: set[str] | None = None) -> None:
+    rows = read_manifest(paths["manifest_csv"])
+    if not rows:
+        return
+    input_smiles: dict[str, str] = {}
+    if paths["input_csv"].exists():
+        with paths["input_csv"].open("r", encoding="utf-8", newline="") as f:
+            for r in csv.DictReader(f):
+                rid = str((r.get("id") or "")).strip()
+                smi = str((r.get("smiles") or "")).strip()
+                if rid:
+                    input_smiles[rid] = smi
+
+    receptor_sha = ""
+    rp = resolved.get("receptor_path")
+    if rp and Path(rp).exists():
+        receptor_sha = sha1_file(Path(rp))
+    rdkit_ver = str(versions.get("rdkit") or "")
+    meeko_ver = str(versions.get("meeko") or "")
+    vina_ver = str(resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path") or "")
+    docking = {
+        "box": resolved.get("box") or {},
+        "params": resolved.get("docking_params") or {},
+    }
+
+    touched = False
+    for r in rows:
+        rid = str((r.get("id") or "")).strip()
+        if not rid:
+            continue
+        if only_ids and rid not in only_ids:
+            continue
+        smi = input_smiles.get(rid, str(r.get("smiles") or ""))
+        sfp = make_sdf_fp(smi, rdkit_ver, params={})
+        pfp = make_pdbqt_fp(sfp, meeko_ver, params={})
+        vfp = make_vina_fp(pfp, vina_ver, receptor_sha, docking, config_hash)
+
+        if module_name == "module2_build3d" and str(r.get("sdf_status") or "").upper() == "DONE":
+            r["sdf_fp"] = sfp
+            r["sdf_rdkit_ver"] = rdkit_ver
+            touched = True
+        if module_name == "module3_meeko" and str(r.get("pdbqt_status") or "").upper() == "DONE":
+            r["pdbqt_fp"] = pfp
+            r["pdbqt_meeko_ver"] = meeko_ver
+            touched = True
+        if module_name == "module4_docking" and str(r.get("vina_status") or "").upper() == "DONE":
+            r["vina_fp"] = vfp
+            r["vina_ver"] = vina_ver
+            r["vina_receptor_sha1"] = receptor_sha
+            r["vina_config_hash"] = config_hash
+            touched = True
+
+    if touched:
+        write_manifest(paths["manifest_csv"], rows)
+
+
 def _run_module(module_name: str, project_dir: Path, logs_dir: Path, resolved: dict, config_hash: str, only_ids: set[str] | None = None):
     if module_name == "module1_admet":
         return admet.run(project_dir, logs_dir, only_ids=only_ids)
@@ -512,7 +570,8 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
         if idx < from_module:
             pending_ids: set[str] = set()
         else:
-            plan = compute_work_plan(paths["project"])
+            plan = compute_work_plan(paths["project"], resolved=resolved, versions=versions, config_hash=config_hash, docking_params={"box": resolved.get("box") or {}, "params": resolved.get("docking_params") or {}})
+            status["work_plan_summary"] = plan.stats
             pending_ids = {
                 "module1_admet": plan.module1_ids,
                 "module2_build3d": plan.module2_ids,
@@ -566,6 +625,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
 
         result = _run_module(module_name, paths["project"], paths["engine_logs_dir"], resolved, config_hash, only_ids=pending_ids if pending_ids else None)
 
+        _stamp_stage_fingerprints(paths, resolved, versions, config_hash, module_name, only_ids=pending_ids if pending_ids else None)
         ended = datetime.now(timezone.utc)
         duration = (ended - started).total_seconds()
         rc = result.returncode
