@@ -1,0 +1,103 @@
+:root {
+  font-family: "Segoe UI", Arial, sans-serif;
+  color: #1d2733;
+  background: #f4f7fb;
+}
+
+body {
+  margin: 0;
+}
+
+.app-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+h1, h2, h3 {
+  margin: 0 0 8px;
+}
+
+.card {
+  background: white;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 12px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.row.wrap {
+  flex-wrap: wrap;
+}
+
+button {
+  background: #005db6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #b0bfd1;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.step-card {
+  background: #dcecff;
+  border-radius: 8px;
+  text-align: center;
+  padding: 8px;
+  font-weight: 600;
+}
+
+select, input {
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #cfd6df;
+}
+
+.banner {
+  background: #fff5d8;
+  border: 1px solid #e1be55;
+  border-radius: 8px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th, td {
+  border: 1px solid #e5e8ed;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.error {
+  border: 1px solid #d14848;
+}
+
+.hint {
+  color: #2c6bc9;
+  font-weight: 600;
+}
