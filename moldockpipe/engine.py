@@ -746,7 +746,7 @@ def run(project_dir: Path, config: dict, *, force: bool = False, rerun_failed_on
     return _execute(project_dir=project_dir, cli_config=config, resume_mode=False, force=force, rerun_failed_only=rerun_failed_only, from_module=from_module)
 
 
-def validate(project_dir: Path, config: dict | None = None) -> dict:
+def preflight_validate(project_dir: Path, config: dict | None = None) -> dict:
     paths = _project_paths(project_dir)
     _ensure_dirs(paths)
     raw_config, warnings = _load_project_config(paths["project"], config)
@@ -772,6 +772,10 @@ def validate(project_dir: Path, config: dict | None = None) -> dict:
         return {"ok": False, "exit_code": 3, "run_id": run_id, "error": str(exc), "runtime": _runtime_info()}
 
 
+def validate(project_dir: Path, config: dict | None = None) -> dict:
+    return preflight_validate(project_dir, config)
+
+
 def resume(project_dir: Path) -> dict:
     current = read_run_status((project_dir / "state" / "run_status.json").resolve())
     config = current.get("config_snapshot") or {}
@@ -780,21 +784,94 @@ def resume(project_dir: Path) -> dict:
 
 def status(project_dir: Path) -> dict:
     paths = _project_paths(project_dir)
-    rs = read_run_status(paths["status_json"])
-    last = (rs.get("history") or [])[-1] if rs.get("history") else {}
+    if not paths["status_json"].exists():
+        return {"ok": False, "exit_code": 1, "message": "No runs found", "status": None}
+    try:
+        rs = json.loads(paths["status_json"].read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"ok": False, "exit_code": 1, "message": f"Invalid run_status.json: {exc}", "status": None}
+    return {"ok": True, "exit_code": 0, "status": rs}
+
+
+def plan(project_dir: Path, config: dict | None = None) -> dict:
+    paths = _project_paths(project_dir)
+    raw_config, warnings = _load_project_config(paths["project"], config)
+    try:
+        resolved, versions = _validate_contract(paths, raw_config, warnings)
+    except PreflightError as exc:
+        return {"ok": False, "exit_code": 1, "message": str(exc), "plan": None}
+    cfg_hash = _config_hash(json.loads(json.dumps(raw_config)))
+    wp = compute_work_plan(
+        paths["project"],
+        resolved=resolved,
+        versions=versions,
+        config_hash=cfg_hash,
+        docking_params={"box": resolved.get("box") or {}, "params": resolved.get("docking_params") or {}},
+    )
+    return {"ok": True, "exit_code": 0, "plan": wp.stats}
+
+
+def validate_project(project_dir: Path, config: dict | None = None) -> dict:
+    paths = _project_paths(project_dir)
+    raw_config, warnings = _load_project_config(paths["project"], config)
+    manifest_errors: list[str] = []
+    artifact_errors: list[str] = []
+    fingerprint_mismatches: list[str] = []
+    tool_identity_mismatches: list[str] = []
+
+    rows = read_manifest(paths["manifest_csv"])
+    ids = [str((r.get("id") or "")).strip() for r in rows if str((r.get("id") or "")).strip()]
+    if len(ids) != len(set(ids)):
+        manifest_errors.append("Duplicate IDs in manifest")
+
+    try:
+        resolved, versions = _validate_contract(paths, raw_config, warnings)
+    except PreflightError as exc:
+        manifest_errors.append(str(exc))
+        resolved = {"receptor_path": None, "vina_cpu_path": None, "vina_gpu_path": None, "box": None, "docking_params": None}
+        versions = {}
+
+    cfg_hash = _config_hash(json.loads(json.dumps(raw_config)))
+    wp = compute_work_plan(
+        paths["project"],
+        resolved=resolved,
+        versions=versions,
+        config_hash=cfg_hash,
+        docking_params={"box": (resolved.get("box") or {}), "params": (resolved.get("docking_params") or {})},
+    )
+    for mod in ("module2", "module3", "module4"):
+        for rid in sorted(wp.reasons.get(mod, {}).get("missing_file", set())):
+            artifact_errors.append(f"{mod}:{rid}:missing_file")
+        for rid in sorted(wp.reasons.get(mod, {}).get("fp_mismatch_stale", set())):
+            fingerprint_mismatches.append(f"{mod}:{rid}:fp_mismatch")
+
+    vexe = resolved.get("vina_gpu_path") or resolved.get("vina_cpu_path")
+    vsha = sha1_file(Path(vexe)) if vexe and Path(vexe).exists() else ""
+    rsha = sha1_file(Path(resolved.get("receptor_path"))) if resolved.get("receptor_path") and Path(resolved.get("receptor_path")).exists() else ""
+    for r in rows:
+        rid = str((r.get("id") or "")).strip()
+        if not rid:
+            continue
+        if str((r.get("vina_status") or "")).upper() == "DONE":
+            stored_vsha = str(r.get("vina_exe_sha1") or "")
+            if stored_vsha and vsha and stored_vsha != vsha:
+                tool_identity_mismatches.append(f"module4:{rid}:vina_exe_sha1")
+            stored_rsha = str(r.get("vina_receptor_sha1") or "")
+            if stored_rsha and rsha and stored_rsha != rsha:
+                tool_identity_mismatches.append(f"module4:{rid}:receptor_sha1")
+
+    errors_found = len(manifest_errors) + len(artifact_errors) + len(fingerprint_mismatches) + len(tool_identity_mismatches)
+    ok = errors_found == 0
     return {
-        "run_id": rs.get("run_id"),
-        "phase": rs.get("phase"),
-        "phase_detail": rs.get("phase_detail"),
-        "progress": rs.get("progress"),
-        "config_hash": rs.get("config_hash"),
-        "last_module": last.get("module"),
-        "last_returncode": last.get("returncode"),
-        "logs_dir": str(paths["engine_logs_dir"]),
-        "leaderboard_csv": str((paths["results_dir"] / "leaderboard.csv").resolve()),
-        "run_status": rs,
-        "manifest_rows": len(read_manifest(paths["manifest_csv"])),
-        "project_dir": str(paths["project"]),
+        "ok": ok,
+        "exit_code": 0 if ok else 1,
+        "validation": {
+            "manifest_errors": manifest_errors,
+            "artifact_errors": artifact_errors,
+            "fingerprint_mismatches": fingerprint_mismatches,
+            "tool_identity_mismatches": tool_identity_mismatches,
+            "summary": {"rows_checked": len(rows), "errors_found": errors_found},
+        },
     }
 
 

@@ -96,8 +96,10 @@ def run_engine(project_dir: Path, docking_mode: str, force: bool, rerun_failed_o
 @app.command()
 @click.argument("project_dir", type=click.Path(path_type=Path))
 @click.option("--docking-mode", default="cpu", type=click.Choice(["cpu", "gpu"], case_sensitive=False))
-def validate(project_dir: Path, docking_mode: str):
-    _emit_and_exit(engine.validate(project_dir, {"docking_mode": docking_mode}))
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def validate(project_dir: Path, docking_mode: str, as_json: bool):
+    result = engine.validate_project(project_dir, {"docking_mode": docking_mode})
+    _emit_and_exit(result if as_json else result)
 
 
 @app.command()
@@ -108,9 +110,25 @@ def resume(project_dir: Path):
 
 @app.command()
 @click.argument("project_dir", type=click.Path(path_type=Path))
-def status(project_dir: Path):
-    click.echo(json.dumps(engine.status(project_dir), indent=2))
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def status(project_dir: Path, as_json: bool):
+    result = engine.status(project_dir)
+    if as_json:
+        _emit_and_exit(result)
+    click.echo(json.dumps(result, indent=2))
 
+
+
+
+@app.command()
+@click.argument("project_dir", type=click.Path(path_type=Path))
+@click.option("--docking-mode", default="cpu", type=click.Choice(["cpu", "gpu"], case_sensitive=False))
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def plan(project_dir: Path, docking_mode: str, as_json: bool):
+    result = engine.plan(project_dir, {"docking_mode": docking_mode})
+    if as_json:
+        _emit_and_exit(result)
+    click.echo(json.dumps(result, indent=2))
 
 @app.command("export-report")
 @click.argument("project_dir", type=click.Path(path_type=Path))

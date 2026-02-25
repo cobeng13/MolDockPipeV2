@@ -5,8 +5,8 @@ from moldockpipe.cli import app, main
 
 def test_cli_status(monkeypatch):
     runner = CliRunner()
-    monkeypatch.setattr("moldockpipe.engine.status", lambda p: {"phase": "completed", "project_dir": str(p)})
-    result = runner.invoke(app, ["status", "./demo"])
+    monkeypatch.setattr("moldockpipe.engine.status", lambda p: {"ok": True, "exit_code": 0, "status": {"phase": "completed", "project_dir": str(p)}})
+    result = runner.invoke(app, ["status", "./demo", "--json"])
     assert result.exit_code == 0
     assert '"phase": "completed"' in result.output
 
@@ -20,10 +20,10 @@ def test_cli_help_works():
 
 def test_cli_validate_exit_code(monkeypatch):
     runner = CliRunner()
-    monkeypatch.setattr("moldockpipe.engine.validate", lambda *a, **k: {"ok": False, "exit_code": 3, "error": "bad"})
-    result = runner.invoke(app, ["validate", "./demo", "--docking-mode", "cpu"])
-    assert result.exit_code == 3
-    assert '"error": "bad"' in result.output
+    monkeypatch.setattr("moldockpipe.engine.validate_project", lambda *a, **k: {"ok": False, "exit_code": 1, "validation": {"summary": {"errors_found": 1}}})
+    result = runner.invoke(app, ["validate", "./demo", "--docking-mode", "cpu", "--json"])
+    assert result.exit_code == 1
+    assert '"errors_found": 1' in result.output
 
 
 def test_main_callable_exists():
@@ -45,3 +45,11 @@ def test_cli_run_auto_disables_ui_when_not_tty(monkeypatch):
     result = runner.invoke(app, ["run", "./demo", "--docking-mode", "cpu"])
     assert result.exit_code == 3
     assert '"error": "validation"' in result.output
+
+
+def test_cli_plan_json(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr("moldockpipe.engine.plan", lambda *a, **k: {"ok": True, "exit_code": 0, "plan": {"module2_todo": 0}})
+    result = runner.invoke(app, ["plan", "./demo", "--json"])
+    assert result.exit_code == 0
+    assert '"module2_todo": 0' in result.output

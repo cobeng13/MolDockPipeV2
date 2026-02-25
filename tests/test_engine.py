@@ -449,3 +449,30 @@ def test_deleted_pdbqt_triggers_module3_and_module4_only(tmp_path, monkeypatch):
     calls.clear()
     assert engine.run(tmp_path, {"docking_mode": "cpu"})["exit_code"] == 0
     assert calls == ["m3", "m4"]
+
+
+def test_status_missing_run_status(tmp_path):
+    res = engine.status(tmp_path)
+    assert res["ok"] is False
+    assert res["exit_code"] == 1
+
+
+def test_plan_returns_stats(tmp_path, monkeypatch):
+    _setup_project(tmp_path)
+    monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
+    res = engine.plan(tmp_path, {"docking_mode": "cpu"})
+    assert res["ok"] is True
+    assert "plan" in res and "module2_todo" in res["plan"]
+
+
+def test_validate_project_reports_missing_pose(tmp_path, monkeypatch):
+    _setup_project(tmp_path)
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+    engine.write_manifest(
+        (tmp_path / "state" / "manifest.csv"),
+        [{"id": "lig", "smiles": "CCO", "admet_status": "PASS", "sdf_status": "DONE", "pdbqt_status": "DONE", "vina_status": "DONE"}],
+    )
+    monkeypatch.setattr(engine, "_validate_contract", _fake_contract)
+    res = engine.validate_project(tmp_path, {"docking_mode": "cpu"})
+    assert res["ok"] is False
+    assert res["validation"]["artifact_errors"]
