@@ -53,6 +53,23 @@ class PreflightError(RuntimeError):
     pass
 
 
+def _ensure_run_requirements(paths: dict[str, Path], versions: dict) -> None:
+    missing: list[str] = []
+    if not versions.get("rdkit"):
+        missing.append("rdkit")
+    if missing:
+        raise PreflightError(
+            "Missing required Python packages for run: "
+            + ", ".join(missing)
+            + ". Select a Python environment with MolDock dependencies installed."
+        )
+    if paths["run_yml"].exists() and yaml is None:
+        raise PreflightError(
+            "config/run.yml exists but PyYAML is unavailable in the selected Python. "
+            "Install PyYAML or choose the MolDock environment."
+        )
+
+
 def _compact_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
@@ -553,6 +570,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
 
     try:
         resolved, versions = _validate_contract(paths, raw_config, warnings)
+        _ensure_run_requirements(paths, versions)
         _write_preflight_log(paths, run_id, config_hash, resolved, versions, warnings)
     except PreflightError as exc:
         _archive_previous(paths)
@@ -567,7 +585,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
             "error": str(exc),
             "result_summary": _build_result_summary(paths),
         })
-        write_json_atomic(paths["status_json"], status)
+        status = update_run_status(paths["status_json"], **status)
         _archive_current(paths, status, config_snapshot)
         return {"ok": False, "exit_code": 3, "error": str(exc), "status": status}
 
@@ -693,7 +711,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
             )
             status["result_summary"] = _build_result_summary(paths)
             _stamp_manifest_config_hash(paths, config_hash)
-            write_json_atomic(paths["status_json"], status)
+            status = update_run_status(paths["status_json"], **status)
             _archive_current(paths, status, config_snapshot)
             return {"ok": False, "exit_code": 1, "failed_module": module_name, "status": status, "results": status["history"]}
 
@@ -720,7 +738,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
             )
             status["result_summary"] = _build_result_summary(paths)
             _stamp_manifest_config_hash(paths, config_hash)
-            write_json_atomic(paths["status_json"], status)
+            status = update_run_status(paths["status_json"], **status)
             _archive_current(paths, status, config_snapshot)
             return {"ok": True, "exit_code": 2, "warnings": ["Module 4 completed with per-ligand failures."], "status": status, "results": status["history"]}
 
@@ -737,7 +755,7 @@ def _execute(project_dir: Path, cli_config: dict | None, resume_mode: bool, *, f
     )
     status["result_summary"] = _build_result_summary(paths)
     _stamp_manifest_config_hash(paths, config_hash)
-    write_json_atomic(paths["status_json"], status)
+    status = update_run_status(paths["status_json"], **status)
     _archive_current(paths, status, config_snapshot)
     return {"ok": True, "exit_code": 0, "status": status, "results": status["history"]}
 

@@ -90,6 +90,34 @@ Recommended versions are warnings by default (strict mode optional via `strict_v
   - `logs/engine/<module>.stderr.log`
 - `run_status.json` includes phase, modules, runtime info, config snapshot/hash, and tool versions.
 
+## UI Progress Tracking (File-Based)
+
+Run progress for the desktop UI is now driven by a dedicated watcher process:
+
+- Watcher module: `python -m moldockpipe.progress_watcher`
+- Output file: `project_dir/state/progress.json`
+- Write mode: atomic (`progress.json.tmp` -> replace)
+
+During a UI run, Tauri starts:
+- runner: `python -m moldockpipe.cli run ...`
+- watcher: `python -m moldockpipe.progress_watcher --project <project> --run-id <id> --interval-ms 700`
+
+`progress.json` fields:
+- `phase`: `starting | running | completed | failed`
+- `current_module`: `M1 | M2 | M3 | M4`
+- `elapsed_sec`
+- `counts`: `total_input`, `admet_passed`, `sdf`, `pdbqt`, `vina_done`
+- `progress`: `M1..M4` (ratio or `null` when denominator is unknown)
+
+Counting is based on disk artifacts (not manifest state):
+- `input/input.csv` rows (if present)
+- `output/admet.csv` pass decisions
+- `3D_Structures/*.sdf`
+- `prepared_ligands/*.pdbqt`
+- `results/*_out.pdbqt`
+
+To change watcher cadence, update `--interval-ms` in `ui/src-tauri/src/main.rs`.
+
 ## Resume behavior
 
 Resume is deterministic and idempotent:

@@ -193,6 +193,29 @@ def test_validation_failure_exit_code_3(tmp_path, monkeypatch):
     assert res["status"]["status"] == "validation_failed"
 
 
+def test_run_fails_fast_when_rdkit_missing(tmp_path, monkeypatch):
+    _setup_project(tmp_path)
+
+    def contract_ok(paths, raw_config, warnings):
+        resolved = {
+            "receptor_path": str((paths["project"] / "receptors" / "target_prepared.pdbqt").resolve()),
+            "vina_cpu_path": str((paths["project"] / "vina.exe").resolve()),
+            "vina_gpu_path": None,
+            "box": {"center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0]},
+            "docking_params": {"exhaustiveness": 8, "num_modes": 9, "energy_range": 3},
+        }
+        return resolved, {"python": "3.11.9", "rdkit": None, "meeko": "0.6.1", "pandas": "2.2.3"}
+
+    monkeypatch.setattr(engine, "_validate_contract", contract_ok)
+    monkeypatch.setattr(engine, "_write_preflight_log", lambda *a, **k: None)
+
+    res = engine.run(tmp_path, {"docking_mode": "cpu"})
+    assert res["ok"] is False
+    assert res["exit_code"] == 3
+    assert res["status"]["status"] == "validation_failed"
+    assert "Missing required Python packages for run: rdkit" in res["error"]
+
+
 def test_config_snapshot_raw_and_hash_stable(tmp_path, monkeypatch):
     _setup_project(tmp_path)
     monkeypatch.setattr(engine, "_validate_contract", _fake_contract)

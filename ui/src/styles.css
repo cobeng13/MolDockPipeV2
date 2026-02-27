@@ -101,3 +101,26 @@ th, td {
   color: #2c6bc9;
   font-weight: 600;
 }
+
+.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #2c6bc9;
+  font-weight: 600;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #c8d8f0;
+  border-top-color: #2c6bc9;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

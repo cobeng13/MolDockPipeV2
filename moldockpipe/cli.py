@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 
 from moldockpipe import engine
+from moldockpipe.purge import purge_project
 from moldockpipe.run_ui import render_final_summary, watch_run_status
 
 
@@ -134,6 +135,16 @@ def plan(project_dir: Path, docking_mode: str, as_json: bool):
 @click.argument("project_dir", type=click.Path(path_type=Path))
 def export_report(project_dir: Path):
     click.echo(json.dumps(engine.export_report(project_dir), indent=2))
+
+
+@app.command()
+@click.argument("project_dir", required=False, type=click.Path(path_type=Path))
+@click.option("--confirm", "confirm1", default=None, help="Internal use: confirmation token.", hidden=True)
+@click.option("--confirm2", "confirm2", default=None, help="Internal use: confirmation token.", hidden=True)
+def purge(project_dir: Path | None, confirm1: str | None, confirm2: str | None):
+    """Purge a project folder for a fresh run (destructive)."""
+    base = project_dir or Path(".")
+    _emit_and_exit(purge_project(base, confirm1=confirm1, confirm2=confirm2))
 
 
 def main() -> None:
